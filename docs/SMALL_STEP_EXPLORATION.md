@@ -37,7 +37,7 @@
 | Matched local-only 10k | PPL 6635.06；未证明 map loss 是主瓶颈 | 是 | 支持 base local recipe bottleneck |
 | Exact-TVM optimization | exact_combo 比 reference 快 2.556% | 是 | 340/1000 被用户停止，无 checkpoint、无质量结论 |
 | Native LangFlow posterior-TVM | 约 1.3k 附近失败/停止 | 否 | 未形成可信 10k 路线 |
-| dsCD/SCD frozen50k pilots | 未过 hard gate；约 step20 pilot 身份无效 | 否 | 不纳入小步主线代码 |
+| dsCD/SCD frozen50k pilot 与 2k 续训 | 探索性跑至 step2000；step1000 endpoint 小幅改善，step2000 反弹；多步生成仍不稳定 | 否 | 未通过全部 pre-pilot hard gate，不纳入小步主线代码；结果见独立 dsCD 文档 |
 | no-SC MSE teacher | 当时仍在独立长跑/评测 | 否 | 不属于已完成小步结果 |
 | CE loss-only、CE-Gumbel、Gumbel-init | 独立替代 teacher/目标探索 | 否 | 不属于本分支四条代码路径 |
 
@@ -45,4 +45,5 @@
 
 没有提交 composition A/B taskflow、J1、endpoint500、native posterior、SCD/dsCD、CE/Gumbel、
 no-SC teacher 的实现与配置；也没有提交远程机器合同、重试专用 env、checkpoint、原始日志、
-profiling CSV/PT、大体积样本集或内部绝对路径。它们的事实状态已在上表概括。
+profiling CSV/PT、大体积样本集或内部绝对路径。它们的事实状态已在上表概括；dsCD 的完成
+轨迹另见 `DSCD_FROZEN50K_ATTEMPT.md`。

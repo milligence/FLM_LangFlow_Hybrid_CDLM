@@ -64,6 +64,19 @@ Exact engineering 的统一重测 reference 为 `3.360606 s/step`，exact_combo 
 cosine=`1.0`。稳定性只运行到 340/1000，nonfinite=`0`，随后按用户要求停止；没有 checkpoint，
 也没有质量/PPL 结论。
 
+## FrozenMSE@50k dsCD 探索性续训
+
+后续独立实验以 FrozenMSE@50k 为 teacher 和 student 初始化，使用无需 JVP 的稳定化离散
+consistency surrogate。固定 endpoint MSE 在 step0/1000/2000 分别为
+`0.618482/0.606493/0.645687`：step1000 只有小幅改善，继续至 step2000 后反弹。
+与此同时 raw adjacent CD MSE 在 step1000→2000 从 `0.000752` 降到 `0.000412`，说明
+局部一致性下降不能单独证明 endpoint 学习成功。
+
+student 8-seed 面板中，2-NFE PPL 从 step1000 的 `57.80` 变为 step2000 的 `310.60`，
+但 entropy 和 distinct-2 仍明显低于 teacher oracle；4-NFE PPL 从 `2289.09` 恶化到
+`5373.10`。step2000 的 128-sample 评估因用户要求关卡而停止。完整配置、性能修复、
+全部数值和解释边界见 [`DSCD_FROZEN50K_ATTEMPT.md`](DSCD_FROZEN50K_ATTEMPT.md)。
+
 ## 每条提交代码路径的两条原始 sample
 
 ### TVM-CE@10k，4 NFE

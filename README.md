@@ -12,10 +12,12 @@
 | `scripts/apply_to_flm.sh` | 将本阶段增量应用到已安装 FrozenMSE 的 FLM 工作区 |
 | `docs/SMALL_STEP_EXPLORATION.md` | 全部探索及明确的不提交清单 |
 | `docs/SMALL_STEP_RESULTS.md` | 复现证据、当前结果及每条代码的两条 sample |
+| `docs/DSCD_FROZEN50K_ATTEMPT.md` | FrozenMSE@50k dsCD 0→2k 探索性续训、性能修复与结果边界 |
 | `manifest/` | 新增文件与被修改文件清单 |
 
 composition、J1、endpoint500、native posterior、SCD/dsCD、CE/Gumbel 和 no-SC teacher
-代码均未提交；它们只在探索记录中说明。
+代码均未提交；它们只在探索记录中说明。dsCD 的后续 2k 实验已有独立结果文档，但仍不
+改变本分支的代码发布范围。
 
 ## 1. 应用代码
 
@@ -120,3 +122,6 @@ Exact-TVM 的三个可选工程开关保留在代码中：
 
 完整数值、协议边界以及 TVM-CE、SC-repair、J0、Posterior-TVM 各两条原始输出，见
 [`docs/SMALL_STEP_RESULTS.md`](docs/SMALL_STEP_RESULTS.md) 文末。
+
+FrozenMSE@50k dsCD 的探索性 0→2k 轨迹、性能瓶颈修复和关卡时的产物状态见
+[`docs/DSCD_FROZEN50K_ATTEMPT.md`](docs/DSCD_FROZEN50K_ATTEMPT.md)。
