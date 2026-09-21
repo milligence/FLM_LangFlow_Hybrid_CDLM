@@ -1,0 +1,64 @@
+# From-scratch posterior-TVM arm A: no cross-query self-conditioning.
+name: task1_posterior_tvm
+backbone: dit
+parameterization: mean
+time_conditioning: True
+T: 0
+subs_masking: False
+causal_attention: False
+ignore_bos: False
+t_max: 1.0
+t_min: 0.0
+double_temb: False
+learnable_loss_weighting: False
+
+state_space: vocab
+corruption: flm_linear_gaussian
+embedding_state: False
+flm_time_eps: 1.0e-5
+time_sampling: physical_t
+training_time_sampling: posterior_tvm_information_cdf
+model_time_condition: posterior_tvm_two_time
+posterior_tvm_time_conditioning: True
+normalize_embeddings: False
+
+self_conditioning: False
+self_condition_probability: 0.0
+finite_map_only_sc: False
+finite_map_sc_hidden: 256
+
+tokenwise_bias: True
+token_bias_warmup_steps: 0
+token_bias_schedule: full
+classification_prototype_mode: direct_vocab_state
+bias_interpretation: source_r_matched_gaussian
+codebook_gradient_mode: all
+
+loss_type: posterior_tvm_local_ce_plus_map_ce
+prediction_target: clean_token_and_target_ema_terminal_posterior
+output_transform: softmax_categorical_posterior
+reduction: local256_mean_plus_lambda_map96_mean
+time_weighting: information_cdf_local_and_curriculum_map
+
+posterior_tvm_variant: A_no_sc
+posterior_tvm_terminal_t: 0.95
+posterior_tvm_kappa: 0.02
+posterior_tvm_map_subset_size: 96
+posterior_tvm_plan_seed: 2026092001
+posterior_tvm_target_ema_decay: 0.99
+posterior_tvm_metrics_backend: reference
+posterior_tvm_target_query_mode: no_grad
+posterior_tvm_target_ema_decay_override: null
+posterior_tvm_selected_grid_override: null
+posterior_tvm_sc_amplitude_override: null
+posterior_tvm_lambda_star_override: null
+posterior_tvm_curriculum_10_30_override: null
+posterior_tvm_curriculum_30_50_override: null
+posterior_tvm_cdf_bank_size: 32
+posterior_tvm_cdf_nodes: 64
+posterior_tvm_cdf_query_batch: 8
+posterior_tvm_cdf_denominator_min: 0.10
+posterior_tvm_cdf_bootstrap_spread_max: 0.25
+
+tvm_inference_grid_physical: []
+posterior_tvm_inference_mode: finite_map
