@@ -1,0 +1,1502 @@
+diff --git a/algo.py b/algo.py
+index b652b69..b0ee42e 100644
+--- a/algo.py
++++ b/algo.py
+@@ -17,6 +17,28 @@ from models.dit import modulate_fused
+ import functools
+ from entmax import entmax_bisect
+ 
++
++from langflow_hybrid import (
++    LangFlowDiagnosticsMixin,
++    LangFlowModelMixin,
++    LangFlowSamplingMixin,
++    candidate_bias_codebook,
++    detached_self_conditioning_embedding,
++    flm_corrupt_vocab,
++    flm_linear_alpha_sigma,
++    flm_linear_euler_update,
++    flm_linear_gamma,
++    flm_model_time_condition,
++    flm_vocab_gaussian_bias,
++    langflow_alpha_sigma,
++    langflow_corrupt_embedding,
++    langflow_euler_edm_update,
++    langflow_gumbel_gamma,
++    langflow_token_bias_weight,
++    probability_prediction_metrics,
++)
++
++
+ class AR(trainer_base.TrainerBase):
+     def __init__(self, config, tokenizer):
+         vocab_size = tokenizer.vocab_size
+@@ -307,6 +329,40 @@ def mse_loss(error):
+     return per_sample.mean()
+ 
+ 
++def flm_clean_data_loss(model_output, target_data, loss_type,
++                        denoiser_output):
++    """Return the per-token FLM clean-data objective.
++
++    ``model_output`` is log-probability when ``denoiser_output`` is
++    ``simplex`` and an unconstrained clean-data prediction when it is
++    ``euclidean``. The MSE reduction is the squared Euclidean norm over the
++    vocabulary, matching the clean-data regression objective in Eq. (10) of
++    the FLM paper rather than averaging away the vocabulary dimension.
++    """
++    if model_output.shape != target_data.shape:
++        raise ValueError(
++            'FLM prediction and target must have identical shapes, got '
++            f'{tuple(model_output.shape)} and {tuple(target_data.shape)}.')
++    if loss_type not in {'cross_entropy', 'mse'}:
++        raise ValueError(
++            f'Unsupported FLM loss_type={loss_type!r}; expected '
++            "'cross_entropy' or 'mse'.")
++    if denoiser_output not in {'simplex', 'euclidean'}:
++        raise ValueError(
++            f'Unsupported FLM denoiser_output={denoiser_output!r}; expected '
++            "'simplex' or 'euclidean'.")
++    if loss_type == 'cross_entropy':
++        if denoiser_output != 'simplex':
++            raise ValueError(
++                'FLM cross_entropy requires denoiser_output=simplex.')
++        return -(target_data * model_output).sum(dim=-1)
++
++    prediction = (model_output.exp()
++                  if denoiser_output == 'simplex'
++                  else model_output)
++    return (prediction - target_data).square().sum(dim=-1)
++
++
+ class DUO_BASE(trainer_base.UniformState):
+     def __init__(self, config, tokenizer):
+         super().__init__(config, tokenizer)
+@@ -784,11 +840,18 @@ class FLMBase(trainer_base.TrainerBase):
+     """Base class for FLM/FMLM.
+     """
+ 
+-    def __init__(self, config, tokenizer):
+-        super().__init__(config, tokenizer)
++    def __init__(self, config, tokenizer, vocab_size=None):
++        super().__init__(config, tokenizer, vocab_size=vocab_size)
+         self.t_min = config.algo.t_min
+         self.t_max = config.algo.t_max
+-        self.lut_a2g, self.lut_g2a = utils.build_luts(K=self.vocab_size)
++        hybrid_uses_vocab_lut = (
++            config.algo.name == 'langflow_flm_hybrid'
++            and str(getattr(config.algo, 'state_space', 'embedding')) == 'vocab')
++        if (config.algo.name == 'langflow_flm_hybrid'
++                and not hybrid_uses_vocab_lut):
++            self.lut_a2g, self.lut_g2a = None, None
++        else:
++            self.lut_a2g, self.lut_g2a = utils.build_luts(K=self.vocab_size)
+         self._is_resuming = (
+             config.checkpointing.resume_from_ckpt
+             and config.checkpointing.resume_ckpt_path is not None
+@@ -1032,6 +1095,35 @@ class FLMBase(trainer_base.TrainerBase):
+ 
+ 
+ class FLM(FLMBase):
++    def __init__(self, config, tokenizer):
++        super().__init__(config, tokenizer)
++        self.loss_type = getattr(
++            self.config.algo, 'loss_type', 'cross_entropy')
++        self.denoiser_output = getattr(
++            self.config.algo, 'denoiser_output', 'simplex')
++        self.loss_scale = float(getattr(
++            self.config.algo, 'loss_scale', 1.0))
++        if self.loss_type not in {'cross_entropy', 'mse'}:
++            raise ValueError(
++                f'Unsupported FLM loss_type={self.loss_type!r}.')
++        if self.denoiser_output not in {'simplex', 'euclidean'}:
++            raise ValueError(
++                'FLM denoiser_output must be simplex or euclidean, got '
++                f'{self.denoiser_output!r}.')
++        if (self.loss_type == 'cross_entropy'
++                and self.denoiser_output != 'simplex'):
++            raise ValueError(
++                'FLM cross_entropy requires denoiser_output=simplex.')
++        if not math.isfinite(self.loss_scale) or self.loss_scale <= 0:
++            raise ValueError(
++                f'FLM loss_scale must be finite and positive, got '
++                f'{self.loss_scale!r}.')
++
++    def _denoiser_prediction(self, x_t, tau_t):
++        if self.denoiser_output == 'simplex':
++            return self.forward(x_t, tau_t).exp()
++        return self.forward_no_softmax(x_t, tau_t)
++
+     def loss(self, x0, output_tokens,
+              current_accumulation_step=None, train_mode=False,
+              xT=None, given_t=None, not_sampling_t=False):
+@@ -1041,9 +1133,41 @@ class FLM(FLMBase):
+                                     t_min=self.t_min, t_max=self.t_max)
+         t = self._tau_to_t(tau_t)
+         x_t, target_data = self.corrupt_continuous(x0, t)
+-        f = self.forward(x_t, tau_t) #condition on tau_t
+-        loss = -(target_data * f).sum(dim=-1)
++        if self.denoiser_output == 'simplex':
++            model_output = self.forward(x_t, tau_t)
++        else:
++            model_output = self.forward_no_softmax(x_t, tau_t)
++        loss = flm_clean_data_loss(
++            model_output=model_output,
++            target_data=target_data,
++            loss_type=self.loss_type,
++            denoiser_output=self.denoiser_output)
++        loss = loss * self.loss_scale
+         self.log('loss', loss.mean(), prog_bar=True)
++        if (train_mode
++                and getattr(
++                    self.config.algo, 'log_prediction_stats', False)):
++            prediction = (model_output.exp()
++                          if self.denoiser_output == 'simplex'
++                          else model_output)
++            target_score = (prediction * target_data).sum(dim=-1)
++            other_score = prediction.masked_fill(
++                target_data.bool(), -torch.inf).max(dim=-1).values
++            self.log(
++                'diagnostics/target_score', target_score.mean(),
++                on_step=True, on_epoch=False, sync_dist=True)
++            self.log(
++                'diagnostics/target_margin',
++                (target_score - other_score).mean(),
++                on_step=True, on_epoch=False, sync_dist=True)
++            self.log(
++                'diagnostics/prediction_l2',
++                prediction.float().square().sum(dim=-1).sqrt().mean(),
++                on_step=True, on_epoch=False, sync_dist=True)
++            self.log(
++                'diagnostics/prediction_abs_max',
++                prediction.float().abs().max(dim=-1).values.mean(),
++                on_step=True, on_epoch=False, sync_dist=True)
+         if self.config.algo.learnable_loss_weighting is True:
+             loss_weight = self.backbone.learnable_loss_weighting(tau_t)
+             loss_weight = loss_weight.unsqueeze(-1)
+@@ -1070,18 +1194,26 @@ class FLM(FLMBase):
+             tau_t_in = tau_t_curr.expand(B)
+             t_in = self._tau_to_t(tau_t_in)
+             dt = self._tau_to_t(tau_t_next.expand(B)) - t_in
+-            x_1_pred = self.forward(z, tau_t_in)
+-            x_1_pred_probs = x_1_pred.exp()
++            x_1_pred = self._denoiser_prediction(z, tau_t_in)
+ 
+             if i == num_steps - 1:
+-                z = x_1_pred_probs
++                z = x_1_pred
+                 break
+ 
+-            v = (x_1_pred_probs - z) / (1.0 - t_in.view(-1, 1, 1) + 1e-5)
++            v = (x_1_pred - z) / (1.0 - t_in.view(-1, 1, 1) + 1e-5)
+             z = z + dt.view(-1, 1, 1) * v
+ 
+         return z.argmax(dim=-1)
+-    
++
++
++class LangFlowFLMHybrid(
++        LangFlowModelMixin,
++        LangFlowDiagnosticsMixin,
++        LangFlowSamplingMixin,
++        FLMBase):
++    """Compatibility public class for the structured LangFlow hybrid."""
++
++
+ class FMLM(FLMBase):
+     def __init__(self, config, tokenizer):
+         super().__init__(config, tokenizer)
+@@ -1862,4 +1994,4 @@ class FMLM_TwoStage(FLMBase):
+             else:
+                 z = z_tilde
+                 
+-        return z.argmax(dim=-1)
+\ No newline at end of file
++        return z.argmax(dim=-1)
+diff --git a/configs/callbacks/grad_record.yaml b/configs/callbacks/grad_record.yaml
+index affdcaf..d9a1efd 100644
+--- a/configs/callbacks/grad_record.yaml
++++ b/configs/callbacks/grad_record.yaml
+@@ -1,3 +1,3 @@
+ grad_record:
+-  _target_: utils.GradientInspectionCallback
+-  num_grads_log: 4
+\ No newline at end of file
++  _target_: experiment_callbacks.GradientInspectionCallback
++  num_grads_log: 4
+diff --git a/configs/config.yaml b/configs/config.yaml
+index ab45077..e82ab29 100644
+--- a/configs/config.yaml
++++ b/configs/config.yaml
+@@ -41,6 +41,13 @@ sampling:
+   temperature: 1.0
+   solver: euler 
+   gamma: 0.0
++  task1_time_grid: uniform_tau
++  task1_first_interval_substeps: 1
++  task1_tau_box_query_counts: []
++  task1_tail_bin_removal_counts: []
++  task1_diagnostic_steps: []
++  task1_initial_noise_seed: null
++  task1_initial_noise_schedule: base_seed_plus_batch_index
+ 
+ training:
+   loss_type: flow
+@@ -66,7 +73,11 @@ eval:
+   perplexity_batch_size: 8
+   compute_perplexity_on_sanity: False
+   gen_ppl_eval_model_name_or_path: gpt2-large  # gpt2-large, meta-llama/Llama-2-7b-hf, meta-llama/Llama-3.1-8B
++  gen_ppl_protocol_id: legacy
++  gen_ppl_comparable: False
++  gen_ppl_formal_sample_count: 1024
+   generate_samples: True
++  validate_before_training: False
+   generated_samples_path: ${cwd:}/samples.json
+ 
+ optim:
+diff --git a/dataloader.py b/dataloader.py
+index ffb6da7..4620854 100644
+--- a/dataloader.py
++++ b/dataloader.py
+@@ -1,4 +1,5 @@
+ import functools
++import glob
+ import itertools
+ import json
+ import math
+@@ -701,6 +702,16 @@ def _group_texts(examples, block_size, bos, eos):
+     return result
+ 
+ 
++def _load_local_text_documents(text_files):
++    """Load one text file as one document, matching the OWT dataset script."""
++    documents = []
++    for filepath in text_files:
++        with open(filepath, encoding='utf-8') as handle:
++            text = re.sub(r'\n\n\n+', '\n\n', handle.read()).strip()
++        documents.append(text)
++    return datasets.Dataset.from_dict({'text': documents})
++
++
+ def get_dataset(dataset_name,
+                 tokenizer,
+                 wrap,
+@@ -712,6 +723,14 @@ def get_dataset(dataset_name,
+                 streaming=False,
+                 revision: Optional[str] = None,
+                 config=None):
++    if dataset_name == 'openwebtext-packed-v1':
++        from packed_dataset import PackedTokenDataset
++        if config is None or block_size != 128 or not wrap or not insert_eos or streaming:
++            raise ValueError('packed OWT requires config, length 128, wrap/EOS, and non-streaming loader')
++        if mode not in ('train', 'validation'):
++            raise ValueError(f'unsupported packed split: {mode}')
++        return PackedTokenDataset(config.data.packed_dir, mode)
++
+     eos_tag = ''
+     if not insert_eos:
+         eos_tag = '_eosFalse'
+@@ -793,6 +812,28 @@ def get_dataset(dataset_name,
+             streaming=False,
+             num_proc=num_proc,
+             trust_remote_code=True)
++    elif dataset_name == 'openwebtext-1k-local-v2':
++        if config is None:
++            raise ValueError(
++                'openwebtext-1k-local-v2 requires the full Hydra config.')
++        dataset_dir = os.path.expanduser(
++            str(config.data.openwebtext_10k_dir))
++        text_files = sorted(glob.glob(
++            os.path.join(dataset_dir, '*.txt')))
++        train_documents = int(config.data.train_documents)
++        valid_documents = int(config.data.valid_documents)
++        required_documents = train_documents + valid_documents
++        if len(text_files) < required_documents:
++            raise FileNotFoundError(
++                f'Expected at least {required_documents} OpenWebText files '
++                f'in {dataset_dir}, found {len(text_files)}. Run '
++                '`scripts/prepare_openwebtext_10k.sh` first.')
++        dataset = datasets.DatasetDict({
++            'train': _load_local_text_documents(
++                text_files[:train_documents]),
++            'validation': _load_local_text_documents(
++                text_files[train_documents:required_documents]),
++        })
+     elif dataset_name == 'scientific_papers_arxiv':
+         dataset = datasets.load_dataset(
+             'scientific_papers', 'arxiv',
+@@ -891,7 +932,8 @@ def get_dataset(dataset_name,
+             tokens = tokenizer(text,
+                                add_special_tokens=False,
+                                return_attention_mask=False,
+-                               return_token_type_ids=False)
++                               return_token_type_ids=False,
++                               verbose=False)
+             if insert_eos:
+                 tokens = {'input_ids':
+                           [t + [EOS] for t in tokens['input_ids']]}
+@@ -1100,7 +1142,14 @@ class RandomFaultTolerantSampler(torch.utils.data.RandomSampler):
+         self.restarting = False
+ 
+     def state_dict(self):
+-        return {'random_state': self.generator.get_state(),
++        # Re-create the current permutation and skip the consumed prefix when
++        # resuming.  The generator has already advanced after ``randperm``, so
++        # its current state would instead create the next epoch's order.
++        random_state = (
++            self.state
++            if self.counter and hasattr(self, 'state')
++            else self.generator.get_state())
++        return {'random_state': random_state,
+                 'counter': self.counter}
+ 
+     def load_state_dict(self, state_dict):
+diff --git a/main.py b/main.py
+index 135ea06..e664260 100644
+--- a/main.py
++++ b/main.py
+@@ -14,8 +14,10 @@ torch.load = functools.partial(torch.load, weights_only=False)
+ from torch.distributed import init_process_group, destroy_process_group
+ import wandb
+ import algo
++import algorithm_registry
+ import dataloader
+ import utils
++import run_manifest
+ 
+ import numpy as np
+ from datetime import datetime
+@@ -106,12 +108,16 @@ def _generate_samples(diffusion_model, config, logger,
+         tokenizer=tokenizer)
+     model.metrics.gen_ppl.reset()
+     model.metrics.sample_entropy.reset()
++    model.metrics.gen_ppl_per_sample = []
+     if config.eval.disable_ema:
+         logger.info('Disabling EMA.')
+         model.ema = None
+     stride_length = config.sampling.stride_length
+     num_strides = config.sampling.num_strides
+     all_samples = []
++    all_sample_ids = []
++    protocol_id = str(getattr(
++        config.eval, 'gen_ppl_protocol_id', 'legacy'))
+ 
+     print("generation start: " + datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+ 
+@@ -131,9 +137,25 @@ def _generate_samples(diffusion_model, config, logger,
+             samples = model.restore_model_and_sample(
+                 num_steps=config.sampling.steps)
+             model.metrics.record_entropy(samples)
+-            text_samples = model.tokenizer.batch_decode(samples)
+-            model.metrics.record_generative_perplexity(
+-                text_samples, config.model.length, model.device)
++            sample_tensor = (torch.stack(samples)
++                             if isinstance(samples, list) else samples)
++            all_sample_ids.extend(
++                sample_tensor.detach().cpu().unbind(dim=0))
++            text_samples = model.tokenizer.batch_decode(
++                sample_tensor, skip_special_tokens=False)
++            if config.eval.compute_generative_perplexity:
++                if protocol_id == 'owt128-gpt2large-genppl-v1':
++                    model.metrics.record_generative_perplexity(
++                        sample_tensor,
++                        config.model.length,
++                        retokenize=False,
++                        device=model.device,
++                        score_all_nonpadding=True)
++                else:
++                    model.metrics.record_generative_perplexity(
++                        text_samples,
++                        config.model.length,
++                        device=model.device)
+             all_samples.extend(list(text_samples))
+ 
+     print("generation end: " + datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+@@ -141,15 +163,70 @@ def _generate_samples(diffusion_model, config, logger,
+     generative_ppl = 0.
+     entropy = 0.
+     if not config.sampling.semi_ar:
+-        generative_ppl = model.metrics.gen_ppl.compute().item()
++        if config.eval.compute_generative_perplexity:
++            generative_ppl = model.metrics.gen_ppl.compute().item()
+         entropy = model.metrics.sample_entropy.compute().item()
+         print('Generative perplexity:', generative_ppl)
+         print('Sample entropy:', entropy)
++    sample_quality = (
++        model.metrics.compute_sample_quality(
++            all_sample_ids,
++            special_token_ids=getattr(model.tokenizer, 'all_special_ids', []))
++        if all_sample_ids else {})
++    sampling_diagnostics = (
++        model.task1_finalize_sampling_diagnostics()
++        if hasattr(model, 'task1_finalize_sampling_diagnostics') else None)
++    trajectory_diagnostics = (
++        model.task1_finalize_trajectory_diagnostics()
++        if hasattr(model, 'task1_finalize_trajectory_diagnostics') else None)
+     samples_path = config.eval.generated_samples_path
++    samples_payload = {
++        'generative_ppl': generative_ppl,
++        'entropy': entropy,
++        'protocol_id': protocol_id,
++        'evaluator_model_name_or_path': str(
++            config.eval.gen_ppl_eval_model_name_or_path),
++        'comparable': bool(config.eval.gen_ppl_comparable),
++        'formal_sample_count': int(config.eval.gen_ppl_formal_sample_count),
++        'sequence_length': int(config.model.length),
++        'nfe': (int(model.last_sampling_nfe)
++                if hasattr(model, 'last_sampling_nfe') else None),
++        'solver': str(config.sampling.solver),
++        'temperature': float(config.sampling.temperature),
++        'generation_seed': int(config.seed),
++        'weights': ('online' if config.eval.disable_ema else 'ema'),
++        'checkpoint_global_step': int(getattr(
++            model, '_loaded_checkpoint_global_step', model.global_step)),
++        'token_bias_warmup_steps': int(getattr(
++            model, 'token_bias_warmup_steps', 0)),
++        'token_bias_weight': float(
++            model._current_token_bias_weight()
++            if hasattr(model, '_current_token_bias_weight') else 0.0),
++        'num_samples': len(all_samples),
++        'per_sample_scores': model.metrics.gen_ppl_per_sample,
++        'sample_quality': sample_quality,
++        'sampling_diagnostics': sampling_diagnostics,
++        'trajectory_diagnostics_artifact': (
++            'task1_trajectory_diagnostics.json'
++            if trajectory_diagnostics is not None else None),
++        'generated_token_ids': [
++            sample.tolist() for sample in all_sample_ids],
++        'generated_seqs': all_samples,
++    }
+     with fsspec.open(samples_path, 'w') as f:
+-        json.dump({'generative_ppl': generative_ppl,
+-                   'entropy': entropy,
+-                   'generated_seqs': all_samples}, f, indent=4)
++        json.dump(samples_payload, f, indent=4)
++    if sampling_diagnostics is not None:
++        diagnostic_path = os.path.join(
++            os.path.dirname(str(samples_path)),
++            'task1_sampling_diagnostics.json')
++        with fsspec.open(diagnostic_path, 'w') as f:
++            json.dump(sampling_diagnostics, f, indent=2)
++    if trajectory_diagnostics is not None:
++        trajectory_path = os.path.join(
++            os.path.dirname(str(samples_path)),
++            'task1_trajectory_diagnostics.json')
++        with fsspec.open(trajectory_path, 'w') as f:
++            json.dump(trajectory_diagnostics, f, indent=2)
+     print('Samples saved at:', samples_path)
+ 
+ 
+@@ -264,9 +341,14 @@ def _eval_ppl(diffusion_model, config, logger, tokenizer):
+ 
+     wandb_logger = None
+     if config.get('wandb', None) is not None:
+-        wandb_logger = L.pytorch.loggers.WandbLogger(
+-            config=omegaconf.OmegaConf.to_object(config),
+-            ** config.wandb)
++        if os.environ.get('WANDB_MODE', '').lower() == 'disabled':
++            wandb_logger = L.pytorch.loggers.CSVLogger(
++                save_dir=config.checkpointing.save_dir,
++                name='local_metrics', version='')
++        else:
++            wandb_logger = L.pytorch.loggers.WandbLogger(
++                config=omegaconf.OmegaConf.to_object(config),
++                ** config.wandb)
+     callbacks = []
+     if 'callbacks' in config:
+         for _, callback in config.callbacks.items():
+@@ -279,7 +361,51 @@ def _eval_ppl(diffusion_model, config, logger, tokenizer):
+         logger=wandb_logger)
+     _, valid_ds = dataloader.get_dataloaders(
+         config, tokenizer, skip_train=True, valid_seed=config.seed)
+-    trainer.validate(model, valid_ds)
++    results = trainer.validate(model, valid_ds)
++    posterior_output_path = str(getattr(
++        config.eval, 'posterior_output_path', ''))
++    if posterior_output_path:
++        def json_ready(value):
++            if isinstance(value, torch.Tensor):
++                return value.detach().cpu().item()
++            if isinstance(value, dict):
++                return {key: json_ready(item) for key, item in value.items()}
++            if isinstance(value, (list, tuple)):
++                return [json_ready(item) for item in value]
++            return value
++
++        posterior_coordinate = (
++            'physical_t' if bool(getattr(
++                config.algo, 'validation_physical_t_stratified', False))
++            else 'tau')
++        posterior_values = getattr(model, 'gamma_bin_diagnostics', {})
++        payload = {
++            'weights': 'online' if config.eval.disable_ema else 'ema',
++            'checkpoint_global_step': int(getattr(
++                model, '_loaded_checkpoint_global_step', model.global_step)),
++            'metrics': json_ready(results[0]) if results else {},
++            'diagnostic_coordinate': posterior_coordinate,
++            'label_semantics': 'original_real_text_tokens',
++            'posterior_by_tau': (
++                posterior_values if posterior_coordinate == 'tau' else {}),
++            'posterior_by_physical_t': (
++                posterior_values
++                if posterior_coordinate == 'physical_t' else {}),
++            'posterior_by_gamma_frequency': getattr(
++                model, 'posterior_bucket_diagnostics', {}),
++            'bias_logit_diagnostics': getattr(
++                model, 'bias_logit_diagnostics', {}),
++            'prototype_diagnostics': getattr(
++                model, 'prototype_diagnostics', {}),
++            'ema': ({
++                'decay': float(model.ema.decay),
++                'num_updates': int(model.ema.num_updates),
++                'uses_num_update_warmup': model.ema.num_updates is not None,
++                'shadow_initialization': 'clone_initial_trainable_parameters',
++            } if model.ema is not None else None),
++        }
++        with fsspec.open(posterior_output_path, 'w') as handle:
++            json.dump(payload, handle, indent=2, sort_keys=True)
+ 
+ 
+ @torch.inference_mode()
+@@ -358,17 +484,28 @@ def generate_reflow_dataset_with_perturbed_rect(diffusion_model, config, logger,
+ 
+ def _train(diffusion_model, config, logger, tokenizer):
+     logger.info('Starting Training.')
+-    wandb_logger = None
++    experiment_logger = None
+     if config.get('wandb', None) is not None:
+-        wid = config.wandb.get('id')
+-        if not wid or len(str(wid)) > 16:
+-            wid = str(uuid.uuid4().hex[:8])
+-        config.wandb.id = wid
+-        if config.wandb.get('name'):
+-            config.wandb.name = f"{config.wandb.name}_{wid}"
+-        wandb_logger = L.pytorch.loggers.WandbLogger(
+-            config=omegaconf.OmegaConf.to_object(config),
+-            ** config.wandb)
++        if os.environ.get('WANDB_MODE', '').lower() == 'disabled':
++            # A disabled W&B run is intentionally ephemeral. Keep a local,
++            # machine-readable metric history so CE/MSE experiments remain
++            # auditable without requiring an external account or network.
++            experiment_logger = L.pytorch.loggers.CSVLogger(
++                save_dir=config.checkpointing.save_dir,
++                name=str(getattr(
++                    config.get('experiment', {}),
++                    'metrics_logger_name', 'local_metrics')),
++                version='')
++        else:
++            wid = config.wandb.get('id')
++            if not wid or len(str(wid)) > 16:
++                wid = str(uuid.uuid4().hex[:8])
++            config.wandb.id = wid
++            if config.wandb.get('name'):
++                config.wandb.name = f"{config.wandb.name}_{wid}"
++            experiment_logger = L.pytorch.loggers.WandbLogger(
++                config=omegaconf.OmegaConf.to_object(config),
++                ** config.wandb)
+ 
+     if (config.checkpointing.resume_from_ckpt
+         and config.checkpointing.resume_ckpt_path is not None
+@@ -396,16 +533,41 @@ def _train(diffusion_model, config, logger, tokenizer):
+             config=config,
+             weights_only=False)
+     else:
++        if config.algo.name == 'langflow_flm_hybrid':
++            # Dataset cache construction may consume process RNG only on the
++            # first arm. Re-seed at the pairing boundary so CE and MSE start
++            # from byte-identical parameters and sampler state.
++            L.seed_everything(config.seed)
+         model = diffusion_model(config, tokenizer=valid_ds.tokenizer)
+ 
++    manifest = None
++    process_is_global_zero = int(os.environ.get('LOCAL_RANK', '0')) == 0
++    if (config.algo.name == 'langflow_flm_hybrid'
++            and process_is_global_zero):
++        manifest = run_manifest.create(config, model)
++        run_manifest.write(manifest, config.checkpointing.save_dir)
++
+     trainer = hydra.utils.instantiate(
+         config.trainer,
+         default_root_dir=os.getcwd(),
+         callbacks=callbacks,
+         strategy=hydra.utils.instantiate(config.strategy),
+-        logger=wandb_logger)
++        logger=experiment_logger)
+     # Force weights_only=False to allow full checkpoint restore (PyTorch 2.6 defaults torch.load to weights_only=True)
+-    trainer.fit(model, train_ds, valid_ds, ckpt_path=ckpt_path)
++    try:
++        if bool(getattr(config.eval, 'validate_before_training', False)):
++            trainer.validate(model, valid_ds)
++        trainer.fit(model, train_ds, valid_ds, ckpt_path=ckpt_path)
++    except Exception as error:
++        if manifest is not None:
++            run_manifest.finish(
++                manifest, config, model, trainer,
++                status='failed', error=error)
++            run_manifest.write(manifest, config.checkpointing.save_dir)
++        raise
++    if manifest is not None:
++        run_manifest.finish(manifest, config, model, trainer)
++        run_manifest.write(manifest, config.checkpointing.save_dir)
+ 
+ 
+ @hydra.main(version_base=None, config_path='configs',
+@@ -417,33 +579,8 @@ def main(config):
+ 
+     logger = utils.get_logger(__name__)
+     tokenizer = dataloader.get_tokenizer(config)
+-    if config.algo.name == 'ar':
+-        diffusion_model = algo.AR
+-    elif config.algo.name == 'mdlm':
+-        diffusion_model = algo.MDLM
+-    elif config.algo.name == 'duo_base':
+-        diffusion_model = algo.DUO_BASE
+-    elif config.algo.name == 'duo':
+-        diffusion_model = algo.DUO
+-    elif config.algo.name == 'flm':
+-        diffusion_model = algo.FLM
+-    elif config.algo.name == 'fmlm_twomodel':
+-        diffusion_model = algo.FMLM_TwoModel
+-    elif config.algo.name == 'fmlm_twostage':
+-        diffusion_model = algo.FMLM_TwoStage
+-    elif config.algo.name == 'fmlm':
+-        diffusion_model = algo.FMLM
+-    elif config.algo.name == 'd3pm':
+-        diffusion_model = algo.D3PMAbsorb
+-    elif config.algo.name == 'sedd':
+-        diffusion_model = algo.SEDDAbsorb
+-    elif config.algo.name == 'distillation':
+-        diffusion_model = algo.Distillation
+-    elif config.algo.name == 'rectification':
+-        diffusion_model = algo.Rectification
+-    else:
+-        raise ValueError(
+-            f'Invalid algorithm name: {config.algo.name}')
++    diffusion_model = algorithm_registry.get_algorithm_class(
++        config.algo.name)
+     kwargs = {'diffusion_model': diffusion_model,
+               'config': config,
+               'tokenizer': tokenizer,
+diff --git a/metrics.py b/metrics.py
+index a756134..cac778a 100644
+--- a/metrics.py
++++ b/metrics.py
+@@ -209,9 +209,13 @@ class Perplexity(NLL):
+ 
+ class Metrics:
+     def __init__(self, gen_ppl_eval_model_name_or_path=None,
+-                 eval_ppl_batch_size=None) -> None:
+-        metrics = torchmetrics.MetricCollection({
+-            'nll': NLL(), 'bpd': BPD(), 'ppl': Perplexity()})
++                 eval_ppl_batch_size=None,
++                 objective_is_nll=True) -> None:
++        metric_dict = {'objective': NLL()}
++        if objective_is_nll:
++            metric_dict.update({
++                'nll': NLL(), 'bpd': BPD(), 'ppl': Perplexity()})
++        metrics = torchmetrics.MetricCollection(metric_dict)
+         metrics.set_dtype(torch.float64)
+         self.train_nlls = metrics.clone(prefix='train/')
+         self.train_aux = BPD()
+@@ -223,11 +227,24 @@ class Metrics:
+         self.tc = TC()
+         self.eval_ppl_batch_size = eval_ppl_batch_size
+         self.gen_ppl_eval_model_name_or_path = gen_ppl_eval_model_name_or_path
+-        self.tokenizer = transformers.AutoTokenizer.\
+-            from_pretrained(gen_ppl_eval_model_name_or_path)
+-        if self.tokenizer.pad_token is None:
+-            self.tokenizer.pad_token = self.tokenizer.eos_token
+-            self.tokenizer.pad_token_id = self.tokenizer.eos_token_id
++        # Loading the generative-PPL tokenizer here makes every training run
++        # depend on network access, even when generative PPL is disabled. Load
++        # it only when record_generative_perplexity is actually called.
++        self.tokenizer = None
++        self.eval_model = None
++        self.gen_ppl_per_sample = []
++
++    def _get_eval_tokenizer(self):
++        if self.tokenizer is None:
++            if not self.gen_ppl_eval_model_name_or_path:
++                raise ValueError(
++                    'A generative-PPL evaluation model must be configured.')
++            self.tokenizer = transformers.AutoTokenizer.from_pretrained(
++                self.gen_ppl_eval_model_name_or_path)
++            if self.tokenizer.pad_token is None:
++                self.tokenizer.pad_token = self.tokenizer.eos_token
++                self.tokenizer.pad_token_id = self.tokenizer.eos_token_id
++        return self.tokenizer
+ 
+     def to(self, *args, **kwargs):
+         self.gen_ppl = self.gen_ppl.to(*args, **kwargs)
+@@ -244,6 +261,7 @@ class Metrics:
+         self.train_aux.reset()
+         self.valid_nlls.reset()
+         self.valid_aux.reset()
++        self.gen_ppl_per_sample = []
+ 
+     def update_train(self, nll, aux_loss, num_tokens):
+         self.train_nlls.update(nll, num_tokens)
+@@ -265,6 +283,7 @@ class Metrics:
+             attn_mask: Attention mask for the eval model
+             eval_context_size: Size of the context for the eval model
+         """
++        tokenizer = self._get_eval_tokenizer()
+         if 'llama2' in self.gen_ppl_eval_model_name_or_path.lower():
+             tokenizer_kwargs = {
+                 'text_samples': text_samples,
+@@ -293,8 +312,7 @@ class Metrics:
+                 'max_length': max_length,
+             }
+             eval_context_size = 1024
+-        samples = self.tokenizer(text_samples,
+-                                 **tokenizer_kwargs)
++        samples = tokenizer(text_samples, **tokenizer_kwargs)
+         attn_mask = samples['attention_mask']
+         samples = samples['input_ids']
+         if 'llama' not in self.gen_ppl_eval_model_name_or_path.lower():
+@@ -329,19 +347,80 @@ class Metrics:
+         """Reset unique token count."""
+         self.unique_token_count = 0
+ 
++    @staticmethod
++    def compute_sample_quality(samples, special_token_ids=None):
++        """Compute collapse-sensitive token statistics for generated IDs."""
++        if isinstance(samples, list):
++            samples = torch.stack(samples)
++        samples = samples.detach().cpu().long()
++        if samples.ndim != 2 or samples.numel() == 0:
++            raise ValueError('samples must be a non-empty [N, L] tensor.')
++
++        entropies = []
++        unigram_tokens = []
++        bigrams = []
++        repeated_fourgrams = 0
++        total_fourgrams = 0
++        for row in samples.tolist():
++            counts = defaultdict(int)
++            for token in row:
++                counts[token] += 1
++            probabilities = [count / len(row) for count in counts.values()]
++            entropies.append(-sum(p * math.log(p) for p in probabilities))
++            unigram_tokens.extend(row)
++            bigrams.extend(zip(row[:-1], row[1:]))
++            fourgrams = list(zip(row[:-3], row[1:-2], row[2:-1], row[3:]))
++            total_fourgrams += len(fourgrams)
++            repeated_fourgrams += len(fourgrams) - len(set(fourgrams))
++
++        corpus_counts = defaultdict(int)
++        for token in unigram_tokens:
++            corpus_counts[token] += 1
++        special_token_ids = set(special_token_ids or [])
++        special_token_count = sum(
++            count for token, count in corpus_counts.items()
++            if token in special_token_ids)
++        return {
++            'mean_sample_unigram_entropy_nats': float(np.mean(entropies)),
++            'distinct_1': len(corpus_counts) / len(unigram_tokens),
++            'distinct_2': len(set(bigrams)) / max(len(bigrams), 1),
++            'repeated_4gram_fraction': (
++                repeated_fourgrams / max(total_fourgrams, 1)),
++            'max_single_token_fraction': (
++                max(corpus_counts.values()) / len(unigram_tokens)),
++            'special_token_frequency': (
++                special_token_count / len(unigram_tokens)),
++            'sample_to_sample_duplication': (
++                1.0 - len({tuple(row) for row in samples.tolist()})
++                / samples.shape[0]),
++        }
++
++    def _get_eval_model(self, device):
++        if self.eval_model is None:
++            if not self.gen_ppl_eval_model_name_or_path:
++                raise ValueError(
++                    'A generative-PPL evaluation model must be configured.')
++            model_kwargs = {}
++            if 'llama' in self.gen_ppl_eval_model_name_or_path.lower():
++                model_kwargs['torch_dtype'] = torch.bfloat16
++            self.eval_model = transformers.AutoModelForCausalLM.from_pretrained(
++                self.gen_ppl_eval_model_name_or_path,
++                **model_kwargs).eval().to(device)
++        return self.eval_model
++
+     @torch.no_grad()
+     def record_generative_perplexity(
+             self,
+             text_samples: typing.List[str],
+             max_length: int,
+             retokenize: bool = True,
+-            device='cuda') -> None:
++            device='cuda',
++            score_all_nonpadding: bool = False) -> None:
+ 
+         os.environ['TOKENIZERS_PARALLELISM'] = 'false'
++        self._get_eval_tokenizer()
+         if 'llama' not in self.gen_ppl_eval_model_name_or_path:
+-            eval_model = transformers.AutoModelForCausalLM.from_pretrained(
+-                self.gen_ppl_eval_model_name_or_path).eval()
+-            eval_model = eval_model.to(device)
++            eval_model = self._get_eval_model(device)
+             # Re-tokenize using eval model's tokenizer
+             if retokenize:
+                 (samples, attn_mask,
+@@ -353,35 +432,50 @@ class Metrics:
+                 eval_context_size = samples.shape[-1]
+             batch_size = min(self.eval_ppl_batch_size,
+                              samples.shape[0])
+-            num_batches = samples.shape[0] // batch_size
+-            for i in range(num_batches):
++            for batch_start in range(0, samples.shape[0], batch_size):
+                 _samples = torch.split(
+-                    samples[i * batch_size: (i + 1) * batch_size],
++                    samples[batch_start: batch_start + batch_size],
+                     eval_context_size,
+                     dim=-1)
+                 _attn_mask = torch.split(
+-                    attn_mask[i * batch_size: (i + 1) * batch_size],
++                    attn_mask[batch_start: batch_start + batch_size],
+                     eval_context_size,
+                     dim=-1)
++                per_sample_nll = torch.zeros(
++                    samples[batch_start: batch_start + batch_size].shape[0],
++                    dtype=torch.float64)
++                per_sample_tokens = torch.zeros_like(per_sample_nll)
+                 for (sample_chunk, attn_mask_chunk) in zip(_samples,
+                                                            _attn_mask):
++                    if sample_chunk.shape[-1] < 2:
++                        continue
+                     logits = eval_model(sample_chunk.to(device),
+                                         attention_mask=attn_mask_chunk.to(device))
+                     logits = logits[0].transpose(-1, -2)
+                     nlls = F.cross_entropy(logits[..., :-1],
+                                            sample_chunk[..., 1:],
+                                            reduction='none')
+-                    first_eos = (
+-                        sample_chunk
+-                        == self.tokenizer.eos_token_id).cumsum(-1) == 1
+-                    token_mask = sample_chunk != self.tokenizer.eos_token_id
+-                    valid_tokens = first_eos[..., 1:] + token_mask[..., 1:]
++                    if score_all_nonpadding:
++                        valid_tokens = attn_mask_chunk[..., 1:].bool()
++                    else:
++                        first_eos = (
++                            sample_chunk
++                            == self.tokenizer.eos_token_id).cumsum(-1) == 1
++                        token_mask = sample_chunk != self.tokenizer.eos_token_id
++                        valid_tokens = (
++                            first_eos[..., 1:] + token_mask[..., 1:]).bool()
+                     self.gen_ppl.update(nlls * valid_tokens, valid_tokens)
++                    per_sample_nll += (
++                        nlls * valid_tokens).sum(dim=-1).double().cpu()
++                    per_sample_tokens += valid_tokens.sum(dim=-1).double().cpu()
++                for nll, token_count in zip(
++                        per_sample_nll.tolist(), per_sample_tokens.tolist()):
++                    self.gen_ppl_per_sample.append({
++                        'nll': nll,
++                        'scored_tokens': int(token_count),
++                    })
+         else:
+-            eval_model = transformers.AutoModelForCausalLM.from_pretrained(
+-                self.gen_ppl_eval_model_name_or_path,
+-                torch_dtype=torch.bfloat16).eval()
+-            eval_model = eval_model.to(device)
++            eval_model = self._get_eval_model(device)
+             # Re-tokenize using eval model's tokenizer
+             tokenizer_llama = transformers.AutoTokenizer.from_pretrained(
+                 self.gen_ppl_eval_model_name_or_path)
+diff --git a/models/dit.py b/models/dit.py
+index b145233..282fbdc 100644
+--- a/models/dit.py
++++ b/models/dit.py
+@@ -145,8 +145,16 @@ def split_and_apply_rotary_pos_emb(qkv, rotary_cos_sin,):
+ def apply_rotary_pos_emb(qkv, cos, sin, use_flash=True):
+     cos = cos[0, :, 0, 0, :cos.shape[-1]//2]
+     sin = sin[0, :, 0, 0, :sin.shape[-1]//2]
+-    
+-    if use_flash:
++
++    # flash-attn 2.8.x implements rotary embeddings through
++    # torch.library.wrap_triton, which is unavailable in torch 2.5. Keep the
++    # fused attention kernel enabled while falling back to the equivalent
++    # PyTorch rotary implementation on older supported torch versions.
++    can_use_flash_rotary = (
++        use_flash
++        and hasattr(torch.library, 'wrap_triton')
++    )
++    if can_use_flash_rotary:
+         return flash_attn.layers.rotary.apply_rotary_emb_qkv_(qkv, cos, sin)
+     else:
+         q, k, v = qkv.unbind(dim=2)
+@@ -516,19 +524,34 @@ class DDiTBlock(nn.Module):
+ 
+ 
+ class EmbeddingLayer(nn.Module):
+-    def __init__(self, dim, vocab_dim):
++    def __init__(self, dim, vocab_dim, normalize=False):
+         super().__init__()
++        self.dim = dim
++        self.normalize = normalize
+         self.embedding = nn.Parameter(torch.empty((vocab_dim, dim)))
+         torch.nn.init.kaiming_uniform_(self.embedding, a=math.sqrt(5))
+ 
++    def normalized_weight(self):
++        """Return the embedding table used by embedding-space models.
++
++        Normalization is computed on every use so gradients still update the
++        underlying unconstrained parameter while the ODE always sees rows with
++        norm sqrt(hidden_size).
++        """
++        if not self.normalize:
++            return self.embedding
++        weight = F.normalize(self.embedding.float(), dim=-1)
++        return (weight * math.sqrt(self.dim)).to(self.embedding.dtype)
++
+     def forward(self, x):
++        weight = self.normalized_weight()
+         if x.ndim == 2:
+-            return self.embedding[x]
++            return weight[x]
+         assert x.ndim == 3
+         return torch.einsum(
+             "blv,ve->ble",
+             x.float(),
+-            self.embedding.float()).to(x.dtype)
++            weight.float()).to(x.dtype)
+ 
+ 
+ class DDiTFinalLayer(nn.Module):
+@@ -568,7 +591,39 @@ class DIT(nn.Module, huggingface_hub.PyTorchModelHubMixin):
+         self.vocab_size = vocab_size
+         dim = config.model.hidden_size
+         cond_dim = config.model.cond_dim
+-        self.vocab_embed = EmbeddingLayer(dim, vocab_size)
++        self.embedding_state = bool(getattr(
++            config.algo, 'embedding_state', False))
++        self.self_conditioning = bool(getattr(
++            config.algo, 'self_conditioning', False))
++        self.vocab_embed = EmbeddingLayer(
++            dim,
++            vocab_size,
++            normalize=bool(getattr(
++                config.algo, 'normalize_embeddings', False)))
++        # Freeze the physical codebook before TrainerBase constructs the EMA.
++        # EMA filters parameters by requires_grad, so changing this flag later
++        # would shift every subsequent shadow/parameter pair.
++        if str(getattr(
++                config.algo, 'codebook_gradient_mode', 'all')) == 'frozen':
++            self.vocab_embed.embedding.requires_grad_(False)
++        # The independent Gaussian-bias matrix is copied from the physical
++        # codebook without drawing random numbers. Keeping it on the backbone
++        # makes it part of the optimizer, checkpoint, and EMA before
++        # TrainerBase constructs any of them. The physical codebook may remain
++        # trainable; the two parameters then update independently from the same
++        # initialization.
++        prototype_mode = str(getattr(
++            config.algo, 'classification_prototype_mode', 'shared'))
++        if prototype_mode == 'independent':
++            self.classification_prototype = nn.Parameter(
++                self.vocab_embed.embedding.detach().clone())
++        else:
++            self.register_parameter('classification_prototype', None)
++        if self.self_conditioning:
++            self.self_cond_proj = nn.Linear(2 * dim, dim, bias=False)
++            self.self_cond_proj.weight.data.zero_()
++        else:
++            self.self_cond_proj = None
+         if not self.causal:
+             self.sigma_map = TimestepEmbedder(cond_dim)
+         if 'flm' in self.config.algo.name or 'fmlm' in self.config.algo.name:
+@@ -635,8 +690,24 @@ class DIT(nn.Module, huggingface_hub.PyTorchModelHubMixin):
+             return bias_dropout_add_scale_fused_inference
+     
+     @torch_compile_deco
+-    def forward(self, x, sigma, sigma_prime=None, use_jvp_attn=False):
+-        x = self.vocab_embed(x)
++    def forward(self, x, sigma, sigma_prime=None, use_jvp_attn=False,
++                inputs_are_embeddings=False, x_self_cond=None):
++        if inputs_are_embeddings:
++            if x.ndim != 3 or x.shape[-1] != self.config.model.hidden_size:
++                raise ValueError(
++                    'Embedding-state input must have shape [B, L, hidden_size], '
++                    f'got {tuple(x.shape)}.')
++        else:
++            x = self.vocab_embed(x)
++
++        if self.self_cond_proj is not None:
++            if x_self_cond is None:
++                x_self_cond = torch.zeros_like(x)
++            if x_self_cond.shape != x.shape:
++                raise ValueError(
++                    'Self-conditioning tensor must match the embedding-state '
++                    f'shape, got {tuple(x_self_cond.shape)} and {tuple(x.shape)}.')
++            x = self.self_cond_proj(torch.cat([x, x_self_cond], dim=-1)) + x
+             
+         if self.causal:
+             t_cond = None
+diff --git a/models/ema.py b/models/ema.py
+index 4389c25..46b94c3 100644
+--- a/models/ema.py
++++ b/models/ema.py
+@@ -24,7 +24,12 @@ class ExponentialMovingAverage:
+     self.collected_params = []
+ 
+   def move_shadow_params_to_device(self, device):
+-    self.shadow_params = [i.to(device) for i in self.shadow_params]
++    # Lightning runs validation hooks under inference_mode.  Moving a CPU
++    # shadow tensor to CUDA there would otherwise create an inference tensor,
++    # which cannot be updated in-place by the next optimizer step.
++    with torch.inference_mode(False):
++      self.shadow_params = [i.to(device).clone().detach()
++                            for i in self.shadow_params]
+ 
+   def update(self, parameters):
+     """
+diff --git a/requirements.txt b/requirements.txt
+index 6eb7dd7..97692f7 100644
+--- a/requirements.txt
++++ b/requirements.txt
+@@ -7,6 +7,7 @@ huggingface_hub==0.36.0
+ hf_transfer==0.1.9
+ hydra-core==1.3.2
+ lightning==2.6.0
++mauve-text==0.4.0
+ numpy==2.3.2
+ omegaconf==2.3.0
+ packaging==25.0
+diff --git a/trainer_base.py b/trainer_base.py
+index fcb025e..1950983 100644
+--- a/trainer_base.py
++++ b/trainer_base.py
+@@ -1,4 +1,5 @@
+ import itertools
++import math
+ import os
+ import random
+ import inspect
+@@ -20,6 +21,7 @@ import dataloader
+ import metrics
+ import models
+ import utils
++from task1_continuation import cosine_transition_lr, linear_transition_lr
+ from omegaconf import ListConfig
+ 
+ 
+@@ -101,9 +103,16 @@ class TrainerBase(L.LightningModule):
+         # Noise Schedule
+         self.noise = LogLinear()
+ 
++        loss_type = getattr(
++            self.config.algo, 'loss_type', 'cross_entropy')
++        objective_is_nll = not (
++            (self.config.algo.name == 'flm' and loss_type == 'mse')
++            or (self.config.algo.name == 'langflow_flm_hybrid'
++                and loss_type == 'softmax_probability_mse'))
+         self.metrics = metrics.Metrics(
+             gen_ppl_eval_model_name_or_path=self.config.eval.gen_ppl_eval_model_name_or_path,
+-            eval_ppl_batch_size=self.config.eval.perplexity_batch_size)
++            eval_ppl_batch_size=self.config.eval.perplexity_batch_size,
++            objective_is_nll=objective_is_nll)
+ 
+         if self.config.training.ema > 0:
+             self.ema = models.ema.ExponentialMovingAverage(
+@@ -119,6 +128,10 @@ class TrainerBase(L.LightningModule):
+         self.neg_infinity = -1000000.0
+         self.fast_forward_epochs = None
+         self.fast_forward_batches = None
++        self._pending_sampler_state = None
++        self._resume_source_optimizer_contract = {}
++        self._task1_lr_graft_history = []
++        self._task1_lr_graft_record = None
+         self.target_tokens = None
+ 
+ 
+@@ -185,7 +198,13 @@ class TrainerBase(L.LightningModule):
+             if ema_sd is not None:
+                 try:
+                     self.ema.load_state_dict(ema_sd)
+-                    current_params = list(self._get_parameters())
++                    # ExponentialMovingAverage stores only trainable parameters.
++                    # Apply the identical filter when validating a restored EMA;
++                    # otherwise a deliberately frozen parameter shifts every
++                    # subsequent shadow/parameter shape comparison.
++                    current_params = [
++                        parameter for parameter in self._get_parameters()
++                        if parameter.requires_grad]
+ 
+                     if len(self.ema.shadow_params) == len(current_params):
+                         shapes_match = all(
+@@ -217,6 +236,11 @@ class TrainerBase(L.LightningModule):
+     def on_load_checkpoint(self, checkpoint):
+         if self.ema:
+             self._pending_ema_state = checkpoint.get('ema', None)
++        self._pending_sampler_state = checkpoint.get('sampler', None)
++        self._resume_source_optimizer_contract = dict(
++            checkpoint.get('task1_optimizer_contract', {}))
++        self._task1_lr_graft_history = list(
++            checkpoint.get('task1_lr_graft_history', []))
+         # Copied from:
+         # https://github.com/Dao-AILab/flash-attention/blob/main/training/src/datamodules/language_modeling_hf.py#L41
+         self.fast_forward_epochs = checkpoint['loops'][
+@@ -252,15 +276,11 @@ class TrainerBase(L.LightningModule):
+             '_batches_that_stepped'] = checkpoint['loops']['fit_loop'][
+             'epoch_loop.automatic_optimization.optim_progress'][
+                 'optimizer']['step']['total']['completed']
+-        if 'sampler' not in checkpoint.keys():
+-            checkpoint['sampler'] = {}
++        checkpoint['sampler'] = {}
+         if hasattr(self.trainer.train_dataloader.sampler,
+                    'state_dict'):
+-            sampler_state_dict = self.trainer.\
+-                train_dataloader.sampler.state_dict()
+-            checkpoint['sampler'][
+-                'random_state'] = sampler_state_dict.get(
+-                'random_state', None)
++            checkpoint['sampler'].update(
++                self.trainer.train_dataloader.sampler.state_dict())
+         else:
+             checkpoint['sampler']['random_state'] = None
+ 
+@@ -282,10 +302,21 @@ class TrainerBase(L.LightningModule):
+                 dl_sampler = sampler_cls(dl.dataset, shuffle=dl.sampler.shuffle)
+             else:
+                 dl_sampler = sampler_cls(dl.dataset)
+-            if (distributed
+-                and self.fast_forward_epochs is not None
+-                    and self.fast_forward_batches is not None):
+-                dl_sampler.load_state_dict({'epoch': self.fast_forward_epochs, 'counter': (self.fast_forward_batches * self.config.loader.batch_size)})
++            pending = self._pending_sampler_state or {}
++            if (distributed and 'epoch' in pending and 'counter' in pending):
++                dl_sampler.load_state_dict(pending)
++            elif (not distributed
++                  and pending.get('random_state') is not None
++                  and 'counter' in pending):
++                dl_sampler.load_state_dict(pending)
++            elif (distributed
++                  and self.fast_forward_epochs is not None
++                  and self.fast_forward_batches is not None):
++                dl_sampler.load_state_dict({
++                    'epoch': self.fast_forward_epochs,
++                    'counter': (self.fast_forward_batches
++                                * self.config.loader.batch_size),
++                })
+             updated_dls.append(
+                 torch.utils.data.DataLoader(
+                     dl.dataset,
+@@ -296,6 +327,207 @@ class TrainerBase(L.LightningModule):
+                     shuffle=False,
+                     persistent_workers=True))
+         self.trainer.fit_loop._combined_loader.flattened = updated_dls
++        self._pending_sampler_state = None
++        self._apply_task1_resume_constant_lr()
++        self._apply_task1_resume_lr_transition()
++
++    def _task1_resume_value(self, name):
++        experiment = self.config.get('experiment', None)
++        if experiment is None:
++            return None
++        resume = experiment.get('resume', None)
++        if resume is None:
++            return None
++        return resume.get(name, None)
++
++    def _apply_task1_resume_constant_lr(self):
++        requested = self._task1_resume_value(
++            'constant_target_learning_rate_override')
++        if requested is None:
++            return
++        if not bool(self.config.checkpointing.resume_from_ckpt):
++            raise RuntimeError(
++                'A constant LR graft is valid only for full-state resume.')
++        target_lr = float(requested)
++        if not target_lr > 0.0:
++            raise ValueError('Resume constant target LR must be positive.')
++        declared_source = self._task1_resume_value('source_learning_rate')
++        declared_source_step = self._task1_resume_value('source_global_step')
++        saved_source = self._resume_source_optimizer_contract.get(
++            'target_learning_rate')
++        saved_source_step = self._resume_source_optimizer_contract.get(
++            'global_optimizer_step')
++        if (declared_source is not None and saved_source is not None
++                and float(declared_source) != float(saved_source)):
++            raise RuntimeError(
++                'SOURCE_LEARNING_RATE does not match the checkpoint contract.')
++        if (declared_source_step is not None and saved_source_step is not None
++                and int(declared_source_step) != int(saved_source_step)):
++            raise RuntimeError(
++                'SOURCE_GLOBAL_STEP does not match the checkpoint contract.')
++
++        optimizer_lrs_before = []
++        for optimizer in self.trainer.optimizers:
++            for group in optimizer.param_groups:
++                optimizer_lrs_before.append(float(group['lr']))
++                group['lr'] = target_lr
++                group['initial_lr'] = target_lr
++
++        scheduler_records = []
++        for scheduler_config in self.trainer.lr_scheduler_configs:
++            scheduler = scheduler_config.scheduler
++            if not (hasattr(scheduler, 'base_lrs')
++                    and hasattr(scheduler, 'lr_lambdas')):
++                raise RuntimeError(
++                    'Task1 LR graft requires the constant LambdaLR scheduler.')
++            last_epoch = int(scheduler.last_epoch)
++            step_count = int(getattr(scheduler, '_step_count', 0))
++            count = len(scheduler.base_lrs)
++            scheduler.base_lrs = [target_lr] * count
++            scheduler.lr_lambdas = [lambda _: 1.0 for _ in range(count)]
++            scheduler._last_lr = [target_lr] * count
++            scheduler_records.append({
++                'class': type(scheduler).__name__,
++                'last_epoch_preserved': last_epoch,
++                'step_count_preserved': step_count,
++            })
++
++        self.lr = target_lr
++        source_lr = (
++            float(saved_source) if saved_source is not None
++            else (float(declared_source)
++                  if declared_source is not None else None))
++        record = {
++            'applied_at_restored_global_step': int(self.global_step),
++            'source_target_learning_rate': source_lr,
++            'optimizer_learning_rates_before_graft': optimizer_lrs_before,
++            'constant_target_learning_rate': target_lr,
++            'scheduler_state': scheduler_records,
++            'optimizer_moments_preserved': True,
++            'ema_preserved': True,
++            'global_step_preserved': True,
++            'sampler_and_data_position_preserved': True,
++            'lr_warmup_restarted': False,
++            'gaussian_bias_warmup_restarted': False,
++        }
++        self._task1_lr_graft_history.append(record)
++        self._task1_lr_graft_record = record
++
++    def _apply_task1_resume_lr_transition(self):
++        requested = self._task1_resume_value(
++            'transition_target_learning_rate')
++        transition_steps = self._task1_resume_value(
++            'transition_optimizer_steps')
++        if requested is None and transition_steps is None:
++            return
++        if requested is None or transition_steps is None:
++            raise RuntimeError(
++                'Resume LR transition requires both target LR and steps.')
++        if self._task1_resume_value(
++                'constant_target_learning_rate_override') is not None:
++            raise RuntimeError(
++                'Resume constant LR and LR transition are mutually exclusive.')
++        if not bool(self.config.checkpointing.resume_from_ckpt):
++            raise RuntimeError(
++                'An LR transition is valid only for full-state resume.')
++
++        target_lr = float(requested)
++        transition_steps = int(transition_steps)
++        transition_schedule = str(
++            self._task1_resume_value('transition_schedule') or 'linear')
++        declared_source = float(self._task1_resume_value(
++            'source_learning_rate'))
++        declared_source_step = int(self._task1_resume_value(
++            'source_global_step'))
++        saved_source = float(self._resume_source_optimizer_contract.get(
++            'target_learning_rate', declared_source))
++        saved_source_step = int(self._resume_source_optimizer_contract.get(
++            'global_optimizer_step', declared_source_step))
++        if int(self.global_step) != declared_source_step:
++            raise RuntimeError(
++                'Restored global step does not match SOURCE_GLOBAL_STEP.')
++        if saved_source_step != declared_source_step:
++            raise RuntimeError(
++                'SOURCE_GLOBAL_STEP does not match the checkpoint contract.')
++        if saved_source != declared_source:
++            raise RuntimeError(
++                'SOURCE_LEARNING_RATE does not match the checkpoint contract.')
++        if (not math.isfinite(target_lr) or target_lr <= 0.0
++                or target_lr > declared_source):
++            raise ValueError(
++                'Resume target LR must be finite, positive, and no greater '
++                'than the source LR.')
++        if transition_steps <= 0:
++            raise ValueError('Resume LR transition steps must be positive.')
++        if transition_schedule not in {'linear', 'cosine'}:
++            raise ValueError(
++                'Resume LR transition schedule must be linear or cosine.')
++
++        optimizer_lrs_before = []
++        for optimizer in self.trainer.optimizers:
++            for group in optimizer.param_groups:
++                actual_lr = float(group['lr'])
++                optimizer_lrs_before.append(actual_lr)
++                if (not math.isfinite(actual_lr) or actual_lr <= 0.0
++                        or actual_lr != declared_source):
++                    raise RuntimeError(
++                        'Restored optimizer LR is zero or inconsistent with '
++                        'the declared source LR.')
++                group['lr'] = declared_source
++                group['initial_lr'] = declared_source
++
++        def multiplier(epoch):
++            helper = (
++                cosine_transition_lr
++                if transition_schedule == 'cosine'
++                else linear_transition_lr)
++            return helper(
++                declared_source, target_lr, declared_source_step,
++                transition_steps, epoch) / declared_source
++
++        scheduler_records = []
++        for scheduler_config in self.trainer.lr_scheduler_configs:
++            scheduler = scheduler_config.scheduler
++            if not (hasattr(scheduler, 'base_lrs')
++                    and hasattr(scheduler, 'lr_lambdas')):
++                raise RuntimeError(
++                    'Task1 LR transition requires a LambdaLR scheduler.')
++            last_epoch = int(scheduler.last_epoch)
++            if abs(last_epoch - declared_source_step) > 1:
++                raise RuntimeError(
++                    'Restored scheduler position is incompatible with the '
++                    'source optimizer step.')
++            step_count = int(getattr(scheduler, '_step_count', 0))
++            count = len(scheduler.base_lrs)
++            scheduler.base_lrs = [declared_source] * count
++            scheduler.lr_lambdas = [multiplier for _ in range(count)]
++            scheduler._last_lr = [declared_source] * count
++            scheduler_records.append({
++                'class': type(scheduler).__name__,
++                'last_epoch_preserved': last_epoch,
++                'step_count_preserved': step_count,
++            })
++
++        self.lr = target_lr
++        record = {
++            'applied_at_restored_global_step': int(self.global_step),
++            'source_target_learning_rate': declared_source,
++            'optimizer_learning_rates_before_graft': optimizer_lrs_before,
++            'transition_target_learning_rate': target_lr,
++            'transition_optimizer_steps': transition_steps,
++            'transition_schedule': transition_schedule,
++            'transition_end_global_step': (
++                declared_source_step + transition_steps),
++            'scheduler_state': scheduler_records,
++            'optimizer_moments_preserved': True,
++            'ema_preserved': True,
++            'global_step_preserved': True,
++            'sampler_and_data_position_preserved': True,
++            'lr_warmup_restarted': False,
++            'gaussian_bias_warmup_restarted': False,
++        }
++        self._task1_lr_graft_history.append(record)
++        self._task1_lr_graft_record = record
+ 
+     def optimizer_step(self, *args, **kwargs):
+         super().optimizer_step(*args, **kwargs)
+@@ -321,8 +553,8 @@ class TrainerBase(L.LightningModule):
+ 
+     def on_train_epoch_start(self):
+         self.metrics.reset()
+-        assert self.metrics.train_nlls.nll.mean_value == 0
+-        assert self.metrics.train_nlls.nll.weight == 0
++        assert all(metric.mean_value == 0 and metric.weight == 0
++                   for metric in self.metrics.train_nlls.values())
+ 
+     def training_step(self, batch, batch_idx):
+         current_accumulation_step = (
+@@ -363,9 +595,11 @@ class TrainerBase(L.LightningModule):
+ 
+     def on_validation_epoch_start(self):
+         self.metrics.reset()
++        if self.ema:
++            self.ema.move_shadow_params_to_device(self.device)
+         self._eval_mode()
+-        assert self.metrics.valid_nlls.nll.mean_value == 0
+-        assert self.metrics.valid_nlls.nll.weight == 0
++        assert all(metric.mean_value == 0 and metric.weight == 0
++                   for metric in self.metrics.valid_nlls.values())
+ 
+     def validation_step(self, batch, batch_idx):
+         del batch_idx
+@@ -892,4 +1126,4 @@ class UniformState(Diffusion):
+     def prior_sample(self, *batch_dims):
+         return torch.randint(
+             0, self.vocab_size, batch_dims, dtype=torch.int64,
+-            device=self.device)
+\ No newline at end of file
++            device=self.device)
+diff --git a/utils.py b/utils.py
+index 7a5679b..b9b3adf 100644
+--- a/utils.py
++++ b/utils.py
+@@ -5,6 +5,7 @@ Copied from https://docs.python.org/3/howto/logging-cookbook.html#using-a-contex
+ """
+ 
+ import argparse
++import json
+ import logging
+ import os
+ import sys
+@@ -26,6 +27,15 @@ from scipy.stats import norm
+ from scipy.special import log_ndtr  # stable log
+ from scipy.interpolate import CubicSpline
+ 
++from experiment_callbacks import (
++    AdaptiveValidationIntervalCallback,
++    CUDAPeakMemoryCallback,
++    GradientInspectionCallback,
++    GradientNormCallback,
++    MilestoneCheckpointCallback,
++    OptimizerStepTimerCallback,
++)
++
+ def count_parameters(model):
+     return sum(p.numel()
+                for p in model.parameters()
+@@ -125,42 +135,6 @@ class LoggingContext:
+             self.handler.close()
+ 
+ 
+-class GradientInspectionCallback(lightning.Callback):
+-    def __init__(self, num_grads_log):
+-        self.num_grads_log = 10
+-
+-    def on_before_optimizer_step(self, trainer, pl_module, optimizer):
+-        gradients = []
+-        for name, param in pl_module.backbone.blocks.named_parameters():
+-            gradients.append(param.grad.view(-1))
+-
+-        if gradients:
+-            grads = torch.cat((gradients))
+-            if not hasattr(pl_module, 'grad_accum_buffer'):
+-                pl_module.grad_step = torch.tensor(
+-                    0, device=pl_module.device)
+-                pl_module.grad_accum_buffer = torch.zeros(
+-                    self.num_grads_log,
+-                    grads.shape[0],
+-                    device=pl_module.device)
+-            pl_module.grad_accum_buffer[pl_module.grad_step] = grads
+-            pl_module.grad_step += 1
+-
+-        if (hasattr(pl_module, 'grad_accum_buffer')
+-                and pl_module.grad_step == self.num_grads_log):
+-            grads = pl_module.grad_accum_buffer
+-            grad_var = grads.std(0).mean()
+-            pl_module.log(name='trainer/grad_var',
+-                          value=grad_var.item(),
+-                          on_step=True,
+-                          on_epoch=False,
+-                          sync_dist=True)
+-            # TODO: save the grads tensor as a numpy array
+-            # and visualize mean, median, top-k
+-            pl_module.grad_accum_buffer.zero_()
+-            pl_module.grad_step = 0
+-
+-
+ def get_logger(name=__name__, level=logging.INFO) -> logging.Logger:
+     """Initializes multi-GPU-friendly python logger."""
+ 
+@@ -630,6 +604,3 @@ def gamma_to_alpha(gamma: Union[np.ndarray, torch.tensor], lut: CubicSpline) ->
+         return torch.from_numpy(alpha).to(gamma.device, dtype=dtype)
+     else:
+         return np.clip(lut(gamma), 0.0, 1.0)
+-    
+-    
+-    
+\ No newline at end of file
