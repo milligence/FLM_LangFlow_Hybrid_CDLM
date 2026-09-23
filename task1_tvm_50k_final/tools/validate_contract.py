@@ -59,11 +59,19 @@ def validate(root:Path)->dict:
         'late_fixed':({'S':12,'M':24,'L':16,'D':24,'D_patch':8,'Z':6,'H':6},[0,0,2,6]),
         'off':({'S':12,'M':24,'L':24,'D':24,'D_patch':0,'Z':6,'H':6},[0,0,0,0]),
     }
-    for name,(counts,intervals) in expected_profiles.items():
-        profile=f['map']['profiles'].get(name,{})
-        check(profile.get('counts')==counts,f'F v2 profile counts {name}')
-        check(profile.get('D_patch_interval_rows')==intervals,f'F v2 intervals {name}')
-        check(sum(counts.values())==96,f'F v2 budget {name}')
+    if 'profiles' in f['map']:
+        for name,(counts,intervals) in expected_profiles.items():
+            profile=f['map']['profiles'].get(name,{})
+            check(profile.get('counts')==counts,f'F v2 profile counts {name}')
+            check(profile.get('D_patch_interval_rows')==intervals,f'F v2 intervals {name}')
+            check(sum(counts.values())==96,f'F v2 budget {name}')
+    else:
+        # Archived pre-30k contract predates the D_patch profile switch.
+        check(f['map']['final_exact_quota_atom_r_zero']==18,
+              'F pre30 exact r-zero quota')
+        check(f['map']['stages'][-1]['counts']==
+              {'S':12,'M':24,'L':24,'D':24,'Z':6,'H':6},
+              'F pre30 final map quota')
     check(f['local']==p['local'],'identical fixed local sampler contracts')
     ev=yaml.safe_load((root/'eval.yaml').read_text())
     check(ev['formal_steps']==[10000,20000,30000,50000],'formal eval milestones')
