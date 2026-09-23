@@ -1,0 +1,5 @@
+# For the CPU references only. Prefer the existing project environment; do not upgrade it in place.
+numpy
+PyYAML
+jsonschema
+torch

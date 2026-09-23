@@ -1,0 +1,18 @@
+# for flm pretrain (only fm loss)
+
+name: fmlm_twostage
+backbone: dit  # dit / dimamba / hf_dit
+parameterization: mean
+time_conditioning: True
+T: 0  # 0 (continuous time) / 1000 
+teacher_f_path: null
+teacher_g_path: null
+subs_masking: False
+causal_attention: False
+ignore_bos: False
+t_min: 0.0
+t_max: 1.0
+use_curriculum: False
+double_temb: True
+add_boundary: True
+learnable_loss_weighting: True

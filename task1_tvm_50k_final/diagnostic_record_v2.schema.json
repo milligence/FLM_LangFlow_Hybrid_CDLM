@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "F-line v2 diagnostic record",
+  "type": "object",
+  "required": ["schema_version", "record_type", "completed_step", "source_kind", "pairing_mode", "usable_for_gate", "values"],
+  "properties": {
+    "schema_version": {"const": "f30-final-v2"},
+    "record_type": {"enum": ["local", "map", "generation", "decomposition", "optimization", "legacy_cross_source"]},
+    "completed_step": {"type": "integer", "minimum": 30000, "maximum": 50000},
+    "checkpoint_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "protocol_hash": {"type": "string", "minLength": 1},
+    "source_kind": {"enum": ["analytical", "canonical_reference", "own_rollout", "not_applicable"]},
+    "pairing_mode": {"enum": ["same_source_flow", "same_initial_noise", "unmatched_cross_source", "not_applicable"]},
+    "usable_for_gate": {"type": "boolean"},
+    "student_weight_family": {"enum": ["online", "target_ema", "eval_ema", "not_applicable"]},
+    "teacher_weight_family": {"enum": ["online", "target_ema", "eval_ema", "not_applicable"]},
+    "reference_weight_family": {"enum": ["online", "target_ema", "eval_ema", "not_applicable"]},
+    "values": {"type": "object", "additionalProperties": {"type": ["number", "integer", "string", "boolean", "null"]}}
+  },
+  "allOf": [{
+    "if": {"properties": {"pairing_mode": {"const": "unmatched_cross_source"}}},
+    "then": {"properties": {"usable_for_gate": {"const": false}}}
+  }],
+  "additionalProperties": true
+}

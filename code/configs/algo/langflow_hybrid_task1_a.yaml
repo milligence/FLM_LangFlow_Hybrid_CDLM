@@ -1,0 +1,38 @@
+# Task1 A: official FLM tau conditioning on the shared vocabulary-space path.
+
+name: langflow_flm_hybrid
+backbone: dit
+parameterization: mean
+time_conditioning: True
+T: 0
+subs_masking: False
+causal_attention: False
+ignore_bos: False
+t_max: 1.0
+t_min: 0.0
+double_temb: False
+learnable_loss_weighting: False
+
+state_space: vocab
+corruption: flm_linear_gaussian
+embedding_state: False
+flm_time_eps: 1.0e-5
+time_sampling: flm_decoding_error_rate_tau_inverse
+training_time_sampling: uniform_tau
+model_time_condition: tau
+normalize_embeddings: False
+self_conditioning: True
+self_condition_probability: 0.25
+tokenwise_bias: True
+token_bias_warmup_steps: 5000
+token_bias_schedule: warmup
+classification_prototype_mode: direct_vocab_state
+bias_interpretation: matched_flm_vocab_gaussian_direct
+codebook_gradient_mode: all
+
+loss_type: softmax_probability_mse
+prediction_target: clean_token_one_hot
+output_transform: softmax
+reduction: vocab_sum_then_valid_token_mean
+time_weighting: uniform_tau_unit_weight
+optimization_scale: one_half

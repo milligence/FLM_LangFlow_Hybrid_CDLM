@@ -1,0 +1,12 @@
+train: openwebtext-1k-local-v2
+valid: openwebtext-1k-local-v2
+tokenizer_name_or_path: gpt2
+cache_dir: ${oc.env:HF_DATASETS_CACHE,/root/autodl-tmp/flm/data/huggingface/datasets}/openwebtext-1k-local
+openwebtext_10k_dir: ${oc.env:FLM_OWT10K_DIR,/root/autodl-tmp/flm/data/openwebtext-10k/documents}
+source_url: https://cdn-datasets.huggingface.co/nlp/datasets/openwebtext/openwebtext-10k.tar.xz
+train_documents: 900
+valid_documents: 100
+wrap: True
+streaming: False
+insert_train_eos: True
+insert_valid_eos: True

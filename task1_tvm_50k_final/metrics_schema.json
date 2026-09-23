@@ -1,0 +1,1384 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Task1 TVM final metric event",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "run_name",
+    "line",
+    "event",
+    "global_step",
+    "contract_sha256",
+    "code_manifest_sha256",
+    "dimensions",
+    "metrics"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "run_name": {
+      "type": "string"
+    },
+    "line": {
+      "enum": [
+        "F",
+        "P",
+        "BASELINE"
+      ]
+    },
+    "event": {
+      "enum": [
+        "train",
+        "local_validation",
+        "map_validation",
+        "gradient_audit",
+        "sc_gate",
+        "generation",
+        "precheck",
+        "health_review"
+      ]
+    },
+    "global_step": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 50000
+    },
+    "timestamp_utc": {
+      "type": "string"
+    },
+    "contract_sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "code_manifest_sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "dimensions": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "weights": {
+          "enum": [
+            "online",
+            "target_ema",
+            "eval_ema",
+            "baseline",
+            "not_applicable"
+          ]
+        },
+        "t_bin": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "gap_class": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "chi_bin": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "grid": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "interval_index": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "parameter_group": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "block": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "teacher_K_old": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "teacher_K_new": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "teacher_checkpoint_sha256": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "reference_step": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "probe_manifest_sha256": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "checkpoint_sha256": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "metric_definition_sha256": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "generation_mode": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "terminal": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "jvp_backend": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "microbatch": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "map_microbatch": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "sc_logical_group_size": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "gate_accepted": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "review_severity": {
+          "enum": [
+            "none",
+            "warning",
+            "owner_review",
+            "hard_stop",
+            null
+          ]
+        }
+      }
+    },
+    "metrics": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "heldout_local_loss": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "Primary F probability-MSE or P CE; immutable bank and node weights.",
+          "x-group": "local"
+        },
+        "local_ce": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "Clean-token cross entropy, vocab natural logs.",
+          "x-group": "local"
+        },
+        "local_probability_mse": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "0.5 sum_vocab((p-onehot)^2), then mean tokens.",
+          "x-group": "local"
+        },
+        "local_target_probability": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "Mean p(y).",
+          "x-group": "local"
+        },
+        "local_top1_accuracy": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "Argmax(p)==y.",
+          "x-group": "local"
+        },
+        "local_posterior_entropy_nats": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "Mean per-position categorical posterior entropy.",
+          "x-group": "local"
+        },
+        "local_velocity_mse": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "Unweighted sample velocity MSE, sum vocab then mean; distinguish from anchor.",
+          "x-group": "local"
+        },
+        "local_pred_velocity_norm": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "Mean per-token L2 norm.",
+          "x-group": "local"
+        },
+        "local_target_velocity_norm": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "Mean per-token L2 norm.",
+          "x-group": "local"
+        },
+        "local_velocity_cosine": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "Per-token cosine averaged.",
+          "x-group": "local"
+        },
+        "local_loss_standard_error": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "Sequence-clustered standard error.",
+          "x-group": "local"
+        },
+        "local_reference_relative_change": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "Relative change on identical fixed bank; reference step in dimensions.",
+          "x-group": "local"
+        },
+        "map_loss_weighted": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "Training weighted objective divided by 96.",
+          "x-group": "map"
+        },
+        "map_loss_unweighted": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "Current pairs with all class weights=1; diagnostic.",
+          "x-group": "map"
+        },
+        "map_residual_l1": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "Mean per-token sum of absolute Q-pT or Q_F-pT.",
+          "x-group": "map"
+        },
+        "map_residual_l2_squared": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "Mean per-token sum of squared residual, no vocab mean.",
+          "x-group": "map"
+        },
+        "map_residual_rms_per_coordinate": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "Diagnostic only: sqrt(mean over B,L,V).",
+          "x-group": "map"
+        },
+        "terminal_velocity_residual_l2_squared": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "Mean token sum raw residual/(1-s) squared.",
+          "x-group": "map"
+        },
+        "terminal_tangent_norm": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "Mean per-token norm of d_s Y.",
+          "x-group": "map"
+        },
+        "terminal_teacher_velocity_norm": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "Mean per-token teacher velocity norm.",
+          "x-group": "map"
+        },
+        "jvp_logit_tangent_norm": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "Mean norm d_eta logits.",
+          "x-group": "map"
+        },
+        "jvp_output_tangent_norm": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "Mean norm d_eta A/R.",
+          "x-group": "map"
+        },
+        "negative_mass": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "P: mean sum ReLU(-Q); F: null.",
+          "x-group": "map"
+        },
+        "negative_mass_squared": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "P regularizer before its coefficient; F: null.",
+          "x-group": "map"
+        },
+        "calibrated_kl": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "P KL(qT||qS), always unweighted diagnostic.",
+          "x-group": "map"
+        },
+        "calibrated_ce": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "P CE(qT,qS), target entropy may move.",
+          "x-group": "map"
+        },
+        "calibration_student_l1_change": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "sum |qS-Q| per token.",
+          "x-group": "map"
+        },
+        "calibration_teacher_l1_change": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "sum |qT-pT| per token.",
+          "x-group": "map"
+        },
+        "raw_Q_sum_max_error": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "max |sum_vocab Q-1|.",
+          "x-group": "map"
+        },
+        "finite_output_entropy": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "P R entropy; F p entropy only, never entropy of signed A.",
+          "x-group": "map"
+        },
+        "target_posterior_entropy": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "Entropy of pT.",
+          "x-group": "map"
+        },
+        "F_A_negative_mass": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "F signed A diagnostic, not penalized.",
+          "x-group": "map"
+        },
+        "F_B_l2": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "Mean per-token L2 norm of centered correction.",
+          "x-group": "map"
+        },
+        "F_eta_B_l2": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "Mean norm eta*B.",
+          "x-group": "map"
+        },
+        "F_eta2_B_l2": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "Mean endpoint correction eta^2*B.",
+          "x-group": "map"
+        },
+        "endpoint_coupled_shift_noise_normalized": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "RMS over token L2 norms of (Y-x_s_pair)/(1-s), diagnostic not true map error.",
+          "x-group": "map"
+        },
+        "chi_mean": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "mean eta/(1-s).",
+          "x-group": "map"
+        },
+        "chi_max": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "max eta/(1-s).",
+          "x-group": "map"
+        },
+        "teacher_offpath_functional_shift": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "KL or MSE between teacher(Y,s) and teacher(x_s_pair,s), not target correctness.",
+          "x-group": "map"
+        },
+        "fixed_endpoint_teacher_drift": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "Field drift on immutable endpoint probe, monitor only.",
+          "x-group": "map"
+        },
+        "frozen_teacher_probe_residual": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "Residual using a versioned frozen diagnostic teacher; never a training target.",
+          "x-group": "map"
+        },
+        "map_residual_standard_error": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "Sequence-clustered standard error.",
+          "x-group": "map"
+        },
+        "local_grad_norm": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "Norm on named shared parameter set, before total clipping.",
+          "x-group": "optimization"
+        },
+        "map_grad_norm_raw": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "All weights one, no lambda, shared parameters.",
+          "x-group": "optimization"
+        },
+        "map_grad_norm_class_weighted": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "Class-weighted, no lambda, shared parameters.",
+          "x-group": "optimization"
+        },
+        "closure_grad_norm": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "No lambda, shared parameters.",
+          "x-group": "optimization"
+        },
+        "grad_cosine_local_map": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "Cosine(local gradient, class-weighted map gradient).",
+          "x-group": "optimization"
+        },
+        "grad_cosine_local_closure": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "Cosine(local gradient, closure gradient).",
+          "x-group": "optimization"
+        },
+        "weighted_grad_ratio_map": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "lambda_m * norm(g_map_weighted)/norm(g_local).",
+          "x-group": "optimization"
+        },
+        "weighted_grad_ratio_closure": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "lambda_c * norm(g_close)/norm(g_local).",
+          "x-group": "optimization"
+        },
+        "rho_map_target": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "Schedule budget, not guaranteed achieved ratio.",
+          "x-group": "optimization"
+        },
+        "rho_closure_target": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "Schedule times accepted-refinement mass.",
+          "x-group": "optimization"
+        },
+        "lambda_map": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "Detached calibrated scalar.",
+          "x-group": "optimization"
+        },
+        "lambda_closure": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "Detached calibrated scalar.",
+          "x-group": "optimization"
+        },
+        "C_map": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "Detached calibration scale.",
+          "x-group": "optimization"
+        },
+        "C_closure": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "Detached calibration scale.",
+          "x-group": "optimization"
+        },
+        "global_grad_norm_preclip": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "All trainable params before clip.",
+          "x-group": "optimization"
+        },
+        "global_grad_norm_postclip": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "After global clipping.",
+          "x-group": "optimization"
+        },
+        "clip_fraction_window": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "Fraction clipped in last 250 updates.",
+          "x-group": "optimization"
+        },
+        "parameter_norm": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "L2 norm for dimension parameter_group/block.",
+          "x-group": "optimization"
+        },
+        "update_norm": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "Actual optimizer parameter delta norm.",
+          "x-group": "optimization"
+        },
+        "update_rms": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "Actual delta RMS, meaningful for zero-init weights.",
+          "x-group": "optimization"
+        },
+        "update_weight_ratio": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "||delta||/max(||theta_before||,1e-6*sqrt(numel)).",
+          "x-group": "optimization"
+        },
+        "adam_update_discrepancy_proxy": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "Virtual joint vs local-only Adam data update, same moments; diagnostic without optimizer mutation.",
+          "x-group": "optimization"
+        },
+        "adam_update_cosine_proxy": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "Cosine of virtual joint and local-only data updates.",
+          "x-group": "optimization"
+        },
+        "lr_legacy": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "Actual step LR.",
+          "x-group": "optimization"
+        },
+        "lr_finite_G": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "Actual step LR.",
+          "x-group": "optimization"
+        },
+        "lr_finite_B": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "F actual correction LR; P null.",
+          "x-group": "optimization"
+        },
+        "finite_lr_bootstrap_gate": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "rho_map/0.30 capped at 1.",
+          "x-group": "optimization"
+        },
+        "hard_class_weight": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "Scheduled class coefficient.",
+          "x-group": "optimization"
+        },
+        "nonfinite_count": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "Count observed before attempted update.",
+          "x-group": "optimization"
+        },
+        "activation_norm": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "Layer-group diagnostic.",
+          "x-group": "optimization"
+        },
+        "adaln_modulation_norm": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "Layer-group diagnostic.",
+          "x-group": "optimization"
+        },
+        "ema_online_target_kl": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "Same cold query, target vs online KL.",
+          "x-group": "optimization"
+        },
+        "ema_online_target_mse": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "Same cold query posterior MSE.",
+          "x-group": "optimization"
+        },
+        "ema_target_local_loss_lag": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "target local loss minus online on same bank.",
+          "x-group": "optimization"
+        },
+        "ema_eval_local_loss_lag": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "eval EMA minus online on same bank.",
+          "x-group": "optimization"
+        },
+        "ema_target_decay_actual": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "Warm-started value used.",
+          "x-group": "optimization"
+        },
+        "ema_eval_decay_actual": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "Warm-started value used.",
+          "x-group": "optimization"
+        },
+        "local_SC_fraction": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "Actual fraction of 256 examples with the fixed logical-group flag.",
+          "x-group": "sc"
+        },
+        "cold_refined_posterior_kl": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "KL(refined||cold), same state.",
+          "x-group": "sc"
+        },
+        "cold_refined_posterior_mse": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "0.5 sum squared posterior difference.",
+          "x-group": "sc"
+        },
+        "sc_K1_local_loss": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "Candidate gate bank K1 loss.",
+          "x-group": "sc"
+        },
+        "sc_K2_local_loss": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "Candidate K2 loss.",
+          "x-group": "sc"
+        },
+        "sc_K4_local_loss": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "Candidate K4 loss.",
+          "x-group": "sc"
+        },
+        "sc_gate_paired_delta": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "Candidate minus accepted field loss, sequence mean.",
+          "x-group": "sc"
+        },
+        "sc_gate_paired_SE": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "Sequence-clustered SE of difference.",
+          "x-group": "sc"
+        },
+        "sc_increment_2_1_sq": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "mean ||p2-p1||^2.",
+          "x-group": "sc"
+        },
+        "sc_increment_4_3_sq": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "mean ||p4-p3||^2.",
+          "x-group": "sc"
+        },
+        "canonical_mix_alpha": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "Transition interpolation coefficient.",
+          "x-group": "sc"
+        },
+        "refined_teacher_mixture_mass": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "Mixture mass on K>1 used by closure gate.",
+          "x-group": "sc"
+        },
+        "closure_loss": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "Primary closure loss before lambda.",
+          "x-group": "sc"
+        },
+        "closure_kl": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "KL(pT||p_cold), even if F uses MSE.",
+          "x-group": "sc"
+        },
+        "sec_per_optimizer_step": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "Wall time excluding separately timed evaluation/calibration.",
+          "x-group": "compute"
+        },
+        "sec_calibration": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "Separate calibration wall time.",
+          "x-group": "compute"
+        },
+        "sec_evaluation": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "Separate evaluation wall time.",
+          "x-group": "compute"
+        },
+        "tokens_per_sec": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "256*128/sec_per_optimizer_step, unique text exposure rate.",
+          "x-group": "compute"
+        },
+        "map_samples_per_sec": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "96/sec_per_optimizer_step when active.",
+          "x-group": "compute"
+        },
+        "peak_allocated_vram_gib": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "CUDA allocated memory peak GiB.",
+          "x-group": "compute"
+        },
+        "peak_reserved_vram_gib": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "CUDA reserved memory peak GiB.",
+          "x-group": "compute"
+        },
+        "gpu_utilization_percent": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "Telemetry if available; null otherwise.",
+          "x-group": "compute"
+        },
+        "sec_local_forward_backward": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "Timing with synchronization policy logged.",
+          "x-group": "compute"
+        },
+        "sec_map_primal_jvp_backward": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "All map derivative work.",
+          "x-group": "compute"
+        },
+        "sec_teacher_forward": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "Including canonical refinement.",
+          "x-group": "compute"
+        },
+        "sec_closure_forward_backward": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "Closure time.",
+          "x-group": "compute"
+        },
+        "sec_optimizer_ema": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "Optimizer and EMA time.",
+          "x-group": "compute"
+        },
+        "local_backbone_forward_example_equivalents": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "Sum batch sizes of actual local backbone calls.",
+          "x-group": "compute"
+        },
+        "teacher_backbone_forward_example_equivalents": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "Sum batch sizes times real refinement calls.",
+          "x-group": "compute"
+        },
+        "finite_backbone_forward_example_equivalents": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "Sum batch sizes of finite primal calls; JVP overhead reported separately.",
+          "x-group": "compute"
+        },
+        "cumulative_unique_text_exposure": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "Number of main-line sequence examples, not distinct dataset members.",
+          "x-group": "compute"
+        },
+        "cumulative_text_tokens_exposure": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "32768 per main optimizer step.",
+          "x-group": "compute"
+        },
+        "cumulative_training_gpu_seconds": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "Actual training-only time.",
+          "x-group": "compute"
+        },
+        "cumulative_eval_gpu_seconds": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "Evaluation time.",
+          "x-group": "compute"
+        },
+        "jvp_forward_relative_error": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "Preflight and correctness audits.",
+          "x-group": "compute"
+        },
+        "jvp_tangent_relative_error": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "Preflight and audits.",
+          "x-group": "compute"
+        },
+        "jvp_parameter_gradient_relative_error": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "Mixed gradient comparison.",
+          "x-group": "compute"
+        },
+        "jvp_parameter_gradient_cosine": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "Mixed gradient comparison.",
+          "x-group": "compute"
+        },
+        "gen_ppl": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "Legacy GPT2-large evaluator, definition fingerprint required.",
+          "x-group": "generation"
+        },
+        "evaluator_mean_nll": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "Mean scored NLL used for PPL.",
+          "x-group": "generation"
+        },
+        "gen_ppl_ci_low": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "Sequence-bootstrap lower endpoint.",
+          "x-group": "generation"
+        },
+        "gen_ppl_ci_high": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "Sequence-bootstrap upper endpoint.",
+          "x-group": "generation"
+        },
+        "legacy_unigram_entropy": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "Legacy statistic with definition ID; never silently replace.",
+          "x-group": "generation"
+        },
+        "legacy_D1": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "Legacy D1 with definition ID.",
+          "x-group": "generation"
+        },
+        "legacy_D2": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "Legacy D2 with definition ID.",
+          "x-group": "generation"
+        },
+        "legacy_repeat4": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "Legacy repeated4 statistic with definition ID.",
+          "x-group": "generation"
+        },
+        "legacy_max_token": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "Legacy max token rate.",
+          "x-group": "generation"
+        },
+        "legacy_special_token": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "Legacy special token rate.",
+          "x-group": "generation"
+        },
+        "corpus_unigram_entropy_nats": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "Entropy of empirical unigram distribution over all raw token IDs.",
+          "x-group": "generation"
+        },
+        "mean_sequence_unigram_entropy_nats": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "Mean entropy of each length128 sequence empirical token distribution.",
+          "x-group": "generation"
+        },
+        "corpus_distinct_1": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "Unique IDs / total tokens.",
+          "x-group": "generation"
+        },
+        "corpus_distinct_2": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "Unique within-sequence adjacent pairs / (N*(L-1)).",
+          "x-group": "generation"
+        },
+        "mean_sequence_repeat4_excess_fraction": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "mean [(L-3 - number unique within-sequence 4grams)/(L-3)].",
+          "x-group": "generation"
+        },
+        "max_token_corpus_fraction": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "Highest corpus unigram relative frequency.",
+          "x-group": "generation"
+        },
+        "special_token_fraction": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "Fraction of tokens in tokenizer-declared special ID set.",
+          "x-group": "generation"
+        },
+        "actual_nfe_per_sample": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "Actual backbone forward calls including all refinement.",
+          "x-group": "generation"
+        },
+        "macro_steps": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "Number of integration intervals, distinct from NFE.",
+          "x-group": "generation"
+        },
+        "sample_count": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "Total generated sequences.",
+          "x-group": "generation"
+        },
+        "seconds_per_sample": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "Generation-only time.",
+          "x-group": "generation"
+        },
+        "decoded_text_length_mean": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "For pathology auditing only; no selection based on length.",
+          "x-group": "generation"
+        }
+      }
+    },
+    "artifacts": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "notes": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "event": {
+            "const": "generation"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "metrics": {
+            "required": [
+              "gen_ppl",
+              "actual_nfe_per_sample",
+              "macro_steps",
+              "sample_count"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "event": {
+            "const": "local_validation"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "metrics": {
+            "required": [
+              "heldout_local_loss",
+              "local_ce",
+              "local_probability_mse"
+            ]
+          }
+        }
+      }
+    }
+  ],
+  "$comment": "No NaN/Infinity JSON. Use null for not-applicable, not-yet-measured, or telemetry unavailable; explain in notes. Emit one event per bin/dimension. Missing science must not become zero."
+}

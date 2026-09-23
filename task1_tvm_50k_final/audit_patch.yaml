@@ -1,0 +1,96 @@
+contract_version: task1-tvm-50k-final-v1.0.0
+audit_id: task1-f-30k-50k-patch-audit-v1
+checkpoint_step: 0
+model_types: [online, target_ema, eval_ema]
+heldout_local:
+  split: validation
+  first_sequences: 256
+  batch_size: 8
+  noise_seed: 424242
+  physical_t_nodes:
+    - 0.0
+    - 0.025
+    - 0.05
+    - 0.075
+    - 0.1
+    - 0.125
+    - 0.15
+    - 0.175
+    - 0.2
+    - 0.225
+    - 0.25
+    - 0.275
+    - 0.3
+    - 0.325
+    - 0.35
+    - 0.375
+    - 0.4
+    - 0.425
+    - 0.45
+    - 0.475
+    - 0.5
+    - 0.525
+    - 0.55
+    - 0.575
+    - 0.6
+    - 0.625
+    - 0.65
+    - 0.675
+    - 0.7
+    - 0.725
+    - 0.75
+    - 0.775
+    - 0.8
+    - 0.825
+    - 0.85
+    - 0.875
+    - 0.9
+    - 0.925
+    - 0.95
+  physical_bins:
+    - {name: "[0,0.1)", low: 0.0, high: 0.1, right_closed: false}
+    - {name: "[0.1,0.25)", low: 0.1, high: 0.25, right_closed: false}
+    - {name: "[0.25,0.5)", low: 0.25, high: 0.5, right_closed: false}
+    - {name: "[0.5,0.75)", low: 0.5, high: 0.75, right_closed: false}
+    - {name: "[0.75,0.9)", low: 0.75, high: 0.9, right_closed: false}
+    - {name: "[0.9,0.95]", low: 0.9, high: 0.95, right_closed: true}
+map_validation:
+  patch_fixed_data_source: true
+  continuous_rows_per_bucket: 16
+  deployment_rows_per_interval: 8
+  deployment_grids:
+    A: [0.0, 0.3392770637, 0.5814685447, 0.7246687714, 0.95]
+    B: [0.0, 0.2375, 0.475, 0.7125, 0.95]
+  microbatch: 4
+  noise_seed: 424242
+sc_validation:
+  model_type: target_ema
+  first_sequences: 64
+  batch_size: 4
+  noise_seed: 424242
+  physical_t_nodes: [0.1, 0.25, 0.5, 0.75, 0.9, 0.95]
+  K: [1, 2, 4]
+optimization_validation:
+  noise_seed: 424242
+  gradient_probe_pack: 0
+  activation_sequences: 8
+  activation_physical_t_nodes: [0.1, 0.25, 0.5, 0.75, 0.9, 0.95]
+trajectory:
+  checkpoint_steps: [30000, 32000, 34000, 36000, 38000, 40000, 42000, 44000, 46000, 48000, 50000]
+  model_type: eval_ema
+generation:
+  trend_samples: 128
+  formal_steps: [30000, 40000, 50000]
+  formal_samples: 1024
+  seed: 626262
+  scheduler_selection_seed: 424242
+  scheduler_confirmation_seed: 515151
+  finite_2_grid: [0.0, 0.5814685447, 0.95]
+  grids:
+    A: [0.0, 0.3392770637, 0.5814685447, 0.7246687714, 0.95]
+    B: [0.0, 0.2375, 0.475, 0.7125, 0.95]
+  primary_weight: eval_ema
+  online_4_samples: 64
+  bootstrap_replicates: 1000
+generation_metric_protocol: owt128-gpt2large-genppl-v1
+time_direction: "physical t: 0=noise, 1=data"

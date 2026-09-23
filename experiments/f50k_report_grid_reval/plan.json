@@ -1,0 +1,9 @@
+{
+  "grid": [0.0, 0.2375, 0.575, 0.7125, 0.95],
+  "steps": [20000, 24000, 30000, 32000, 36000, 40000, 46000, 48000, 50000],
+  "weights": ["online", "eval_ema"],
+  "samples": 128,
+  "seed": 424242,
+  "batch_size": 4,
+  "protocol": "owt128-gpt2large-genppl-v1"
+}

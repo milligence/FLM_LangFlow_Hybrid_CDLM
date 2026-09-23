@@ -1,0 +1,9 @@
+train: openwebtext-packed-v1
+valid: openwebtext-packed-v1
+tokenizer_name_or_path: ${oc.env:FLM_TOKENIZER_PATH,gpt2}
+packed_dir: ${oc.env:FLM_PACKED_DATA_DIR,/root/autodl-tmp/flm/data/owt128-327m-v1}
+cache_dir: ${.packed_dir}
+wrap: True
+streaming: False
+insert_train_eos: True
+insert_valid_eos: True

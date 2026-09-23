@@ -1,0 +1,100 @@
+contract_id: task1-f-final-30k-50k-v2
+schema_version: f30-final-v2
+line: F
+root:
+  completed_updates: 30000
+  checkpoint_sha256: c530cca8a9dce52c337d3724236db1238f9af4b2c0ce574923fc670c97d3a523
+  resume: latest_valid_full_state_in_this_lineage_else_exact_root
+  excluded: discarded_old_31k_continuation_by_lineage
+immutable:
+  model: unchanged
+  jvp: connected_exact_eta_jvp_unchanged
+  local_batch: 256
+  map_batch: 96
+  local_sc_probability: 0.25
+  canonical_teacher_K: 2
+  closure_rows: 32
+  rho_map: 0.30
+  map_loss_denominator: 96
+  target_ema_decay: 0.99
+  eval_ema_decay: 0.9999
+  finite_sc: cold_every_query
+  optimizer_lr_precision: inherited
+  rollout_source_training: false
+  G_star: B
+profiles:
+  pre32:
+    counts: {S: 12, M: 24, L: 24, D_original: 24, D_patch: 0, Z: 6, H: 6}
+    D_patch_interval_rows: [0, 0, 0, 0]
+  uniform:
+    counts: {S: 12, M: 24, L: 16, D_original: 24, D_patch: 8, Z: 6, H: 6}
+    D_patch_interval_rows: [2, 2, 2, 2]
+  late_trial:
+    counts: {S: 12, M: 24, L: 16, D_original: 24, D_patch: 8, Z: 6, H: 6}
+    D_patch_interval_rows: [0, 0, 2, 6]
+  late_fixed:
+    counts: {S: 12, M: 24, L: 16, D_original: 24, D_patch: 8, Z: 6, H: 6}
+    D_patch_interval_rows: [0, 0, 2, 6]
+  'off':
+    counts: {S: 12, M: 24, L: 24, D_original: 24, D_patch: 0, Z: 6, H: 6}
+    D_patch_interval_rows: [0, 0, 0, 0]
+D_patch:
+  source: analytical_data
+  grid: B
+  rows: 8
+  exact_jitter_fraction_each_interval: [0.5, 0.5]
+  dedicated_rng_stream: map_pair_D_patch
+decisions:
+  step_semantics: checkpoint_k_contains_k_completed_updates
+  32000: activate_uniform_for_update_32001_and_recalibrate_existing_lambda
+  36000: risk_guard_then_gate36_once_else_keep_uniform
+  40000: risk_guard_then_gate40_keep_late_fixed_else_uniform
+  after_40000: freeze_to_50000
+  missing_gate36: keep_uniform
+  missing_gate40: restore_uniform
+gate36:
+  online_and_eval_B_improvement_skips_trial: 0.05
+  late_signal_share_min_at_34k_and_36k: 0.70
+  isolated_reference_last_mse_improvement_skips_trial: 0.15
+  terminal_mse_over_matching_floor_min: 100.0
+  eval_B_over_canonical_K2_ppl_min: 1.10
+  finite_minus_canonical_nll_ci_low_positive: true
+  canonical_ppl_ratio_max: 1.10
+  local_aggregate_mse_ratio_max: 1.01
+  sensitive_local_mse_ce_ratio_max: 1.03
+  weighted_map_ratio_range: [0.15, 0.45]
+gate40:
+  online_B_ppl_ratio_max: 0.95
+  online_B_nll_ci_high_negative: true
+  isolated_reference_last_mse_ratio_max: 0.90
+  eval_B_ppl_ratio_max: 1.05
+  eval_A_ppl_ratio_max: 1.10
+  canonical_ppl_ratio_max: 1.10
+  general_L_signal_mse_ratio_max: 1.20
+  local_aggregate_mse_ratio_max: 1.01
+  sensitive_local_mse_ce_ratio_max: 1.03
+  weighted_map_ratio_range: [0.15, 0.45]
+diagnostics:
+  steps: [32000, 34000, 36000, 38000, 40000, 42000, 44000, 46000, 48000, 50000]
+  trend_samples: 128
+  formal_steps: [30000, 40000, 50000]
+  formal_samples: 1024
+  seed: 424242
+  trajectory_seeds: 16
+  same_source_repair_step32_seeds: 8
+  decomposition_steps: [32000, 36000, 40000]
+  canonical_K2_generation:
+    steps: [32000, 36000, 40000, 50000]
+    samples: 64
+    macro_steps: 512
+    forwards_per_sequence: 1024
+    weights: eval_ema
+  rolling_T095_bridge:
+    steps: [32000]
+    samples: 64
+    macro_steps: 512
+  legacy_unmatched_cross_source_usable_for_gate: false
+retention:
+  pinned: [30000, 32000, 36000, 40000, 50000]
+  latest_complete_full_states: 2
+  delete_nonpinned_only_after_audit_complete_and_newer_atomic_checkpoint: true

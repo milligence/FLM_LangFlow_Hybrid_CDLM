@@ -1,0 +1,348 @@
+contract_version: task1-tvm-50k-final-v1.0.0
+run_name: task1_tvm_f_scratch_50k_final_v1
+line: F
+seed: 20260921
+finite_init_seed: 20260922
+total_optimizer_steps: 50000
+sampler_config: sampler_f.yaml
+eval_config: eval.yaml
+runtime_bindings: runtime_bindings.json
+initialize_from_checkpoint: null
+dataset:
+  name: OpenWebText
+  binding: data.owt_train
+  reuse_existing_cache: true
+  split_binding: data.split_manifest
+  download_or_retokenize: false
+tokenizer:
+  name: GPT-2
+  binding: data.tokenizer
+  revision_binding: data.tokenizer_revision
+  vocab_size: 50257
+seq_len: 128
+vocab_size: 50257
+global_batch: 256
+world_size: 1
+microbatch: 32
+grad_accum: 8
+map_microbatch: 8
+closure_microbatch: 8
+oom:
+  allowed: true
+  local_candidates:
+  - 32
+  - 16
+  - 8
+  - 4
+  - 2
+  - 1
+  map_candidates:
+  - 8
+  - 4
+  - 2
+  - 1
+  keep_global_batch: 256
+  keep_map_batch: 96
+  retry_full_update_from_last_committed_state: true
+  keep_sample_ids_noise_times_sc_flags: true
+  forbid_precision_change: true
+model:
+  legacy_factory_binding: legacy.model_factory
+  legacy_config_binding: legacy.model_config
+  hidden_size: 768
+  num_layers: 12
+  num_heads: 12
+  head_dim: 64
+  mlp_ratio: 4
+  mlp_hidden_size: 3072
+  dropout: 0.1
+  attention_softcap: 50.0
+  causal: false
+  rope: reuse_legacy
+  input_embedding_row_normalization: false
+  tie_input_output: false
+  normalization: reuse_legacy_LayerNorm_AdaLN_exact_eps_affine_and_init
+  new_qk_rmsnorm: false
+  spectral_reinitialization: false
+  self_condition:
+    enabled: true
+    local_probability: 0.25
+    logical_group_size: '@legacy.sc_microbatch'
+    injection: reuse_legacy_zero_init_1536_to_768_residual
+    local_cache: stopgrad(p_cold @ online.W_embed)
+    cache_prepass_dropout: '@legacy.sc_prepass_dropout'
+    local_loss_forward_dropout: 0.1
+    finite_query_cache: null
+    generation_finite_cache: null
+  time_conditioning:
+    source: legacy_tau_pipeline
+    legacy_sinusoidal_dim: 256
+    condition_width: 128
+    formula: E_legacy(tau(r))+eta*G(r,eta)
+    jvp_coordinate: eta
+    jvp_held_fixed:
+    - x
+    - r
+    - sc
+    eta_to_s_factor: 1/(1-r)
+  finite_branch:
+    inputs:
+    - r
+    - eta
+    layers:
+    - 2
+    - 128
+    - 128
+    activation: SiLU
+    output_activation: null
+    hidden_init: torch_linear_default_with_finite_init_seed
+    last_weight_init: zeros
+    last_bias_init: zeros
+    outer_gate: eta
+    normalization: null
+  output_head:
+    posterior: reuse_legacy_classifier_and_source_bias
+    correction:
+      in_features: 768
+      out_features: 50257
+      bias: true
+      weight_init: zeros
+      bias_init: zeros
+      tap: same_normalized_hidden_input_as_posterior_classifier
+      centering: subtract_vocab_mean
+      formula: A=p+eta*B
+      simplex_projection: false
+objective:
+  local_loss: 0.5*sum_vocab((p-onehot)^2)
+  map_loss: F_stop_gradient_equivalent_weighted_velocity_MSE
+  closure_loss: posterior_MSE
+  terminal_T: 0.95
+  local_endpoint_convention: reuse_legacy_safe_time; do not replace physical 1 by T
+  map_batch: 96
+  closure_batch: 32
+  closure_source_classes:
+  - S
+  - M
+  reduction: sum_vocab_then_mean_tokens_then_sum_weighted_sequences_divide_objective_batch
+  local_weight: 1.0
+  rho_map_schedule: sampler.map.stages
+  rho_map_final: 0.3
+  rho_closure_schedule:
+  - - 0
+    - 0.0
+  - - 5000
+    - 0.0
+  - - 8000
+    - 0.05
+  - - 10000
+    - 0.05
+  - - 11000
+    - 0.1
+  - - 50000
+    - 0.1
+  closure_effective_gate: multiply_by_total_teacher_mixture_mass_on_K_greater_than_1
+  hard_weight_schedule: sampler.map.hard_weight
+  negative_mass_weight: null
+  kappa: null
+  teacher_state: stopgrad(Y_student_actual)
+  teacher_target_detached: true
+  target_R_in_P_calibration_detached: true
+  generated_predecessor_augmentation: false
+  trajectory_distillation: false
+gradient_calibration:
+  shared_parameters: all_trainable_legacy_parameters_excluding_G_and_F_B
+  probe_stream: calibration_train_only
+  probe_packs: 4
+  local_per_pack: 32
+  map_per_pack: 24
+  closure_per_pack: 8
+  probe_map_pool: 96 with current exact class quotas; randomly split into four packs
+  recalibrate_every_steps_until_10k: 500
+  first_step: 500
+  recalibrate_after_10k:
+  - 15000
+  - 18000
+  - 20000
+  - 24000
+  - 30000
+  - 32000
+  raw_map_uses_all_class_weights_one: true
+  scale_upper: 10.0
+  denominator_local_fraction_floor: 0.1
+  absolute_norm_floor: 1.0e-12
+  scale_rule: median(N_local/max(N_map_raw,0.1*N_local,1e-12)); cap at 10
+  lambda_rule: rho_map(k)*detached_C_map
+  weighted_ratio_safety_factor: 1.5
+  audit_every_steps: 250
+  safety_action: downward_only_C_recalibration_then_recheck_same_probe; hard_stop_if_not_controlled
+  closure_rule: same_detached_scale_rule_on_closure_gradient
+  mutate_optimizer_or_training_rng: false
+  per_block_diagnostics: true
+optimizer:
+  type: AdamW
+  betas:
+  - 0.9
+  - 0.95
+  eps: 1.0e-08
+  weight_decay: 0.0
+  weight_decay_provenance: new_explicit_TVM_default_not_claimed_historical_value
+  grad_clip: 1.0
+  lr_schedule:
+  - - 0
+    - 0.0
+  - - 2500
+    - 0.0006
+  - - 30000
+    - 0.0006
+  - - 30500
+    - 0.0003
+  - - 50000
+    - 0.0003
+  lr_evaluation_clock: update_number=k+1; all other curriculum clocks use k
+  parameter_groups:
+    legacy:
+      base_multiplier: 1.0
+      bootstrap_gate: null
+    finite_G:
+      base_multiplier: 1.0
+      bootstrap_gate: min(1,rho_map(k)/0.30)
+    finite_B:
+      base_multiplier: 0.1
+      bootstrap_gate: min(1,rho_map(k)/0.30)
+  finite_no_objective_grad: set grad=None; do not advance moments before map activation
+  automatic_lr_changes: false
+ema:
+  target_decay: 0.99
+  eval_decay: 0.9999
+  warm_start: beta(j)=min(beta_max,1-1/(j+1)), j=completed_updates_after_step
+  init: copy_random_online_step0
+  update_after_each_optimizer_step: true
+  storage: float32
+  include_finite_params: true
+  bias_ramp_is_external_not_ema: true
+canonical_sc:
+  initial_K: 1
+  gate_attempts:
+  - step: 5000
+    candidate_K: 2
+  - step: 6000
+    candidate_K: 2
+  - step: 10000
+    candidate_K: 4
+  - step: 11000
+    candidate_K: 4
+  skip_attempt_if_already_accepted: true
+  transition_steps: 1000
+  count_includes_cold_query: true
+  teacher_embedding_matrix: target_EMA_W_embed
+  target_mixture: (1-alpha)*p_oldK+alpha*p_newK; same refinement chain
+  gate:
+    bank: fixed_local_validation
+    weights: target_ema
+    dropout: 0.0
+    primary_loss: posterior_MSE
+    require_mean_improvement_fraction: 0.001
+    require_paired_standard_errors: 2.0
+    sensitive_bins:
+    - - 0.5
+      - 0.65
+    - - 0.65
+      - 0.75
+    - - 0.75
+      - 0.85
+    max_sensitive_bin_worsening_fraction: 0.02
+    max_sensitive_bin_worsening_SE: 2.0
+    K4_increment_condition: mean_sq(p4-p3)<=mean_sq(p2-p1)
+    failure_action: retain_current_K_and_continue_training_no_schedule_delay
+  closure_only_after_acceptance: true
+bias:
+  type: matched_gaussian
+  formula: w(k)*t_safe/(1-t_safe)^2*x
+  time_in_finite_query: r
+  time_in_terminal_teacher: s
+  warmup_steps: 5000
+  weight: min(k/5000,1)
+  safe_time_binding: legacy.bias_safe_time_function
+  same_global_step_in_online_and_EMA: true
+precision:
+  master_parameters: float32
+  backbone: bfloat16
+  posterior_math: float32
+  jvp: hand_exact_connected_tangent_float32
+  attention_scores_and_softmax: float32
+  jvp_norm_and_reduction: float32
+  loss_reduction: float32
+  scaler: null
+  TF32: false
+  reference_testing: float64_toy_and_float32_tiny_backbone
+  detach_jvp: false
+  finite_difference_training: false
+checkpoint:
+  save_steps:
+  - 0
+  - 500
+  - 1000
+  - 2000
+  - 3000
+  - 5000
+  - 6000
+  - 8000
+  - 10000
+  - 15000
+  - 18000
+  - 20000
+  - 24000
+  - 30000
+  - 30500
+  - 32000
+  - 34000
+  - 36000
+  - 38000
+  - 40000
+  - 42000
+  - 44000
+  - 46000
+  - 48000
+  - 50000
+  rolling_full_state_every_steps: 1000
+  rolling_keep_last: 2
+  atomic_write: true
+  allow_overwrite_milestones: false
+  resume_policy: strict_same_contract_code_and_provenance
+  save_sampler_rng_optimizer_EMAs_sc_gate_calibration: true
+  zero_grad_before_save: true
+eval:
+  steps:
+  - 1000
+  - 2000
+  - 3000
+  - 5000
+  - 6000
+  - 8000
+  - 10000
+  - 15000
+  - 20000
+  - 30000
+  - 40000
+  - 50000
+  config: eval.yaml
+  must_not_consume_training_rng: true
+logging:
+  metrics_schema: metrics_schema.json
+  train_scalars_every_steps: 10
+  gradient_audit_every_steps: 250
+  fixed_local_probe_every_steps: 500
+  fixed_map_probe_every_steps: 500
+  parameter_update_audit_every_steps: 500
+  per_sequence_artifacts: true
+  record_actual_forward_calls: true
+stop:
+  nonfinite: hard_stop_before_optimizer_step
+  semantic_mismatch: hard_stop
+  resume_mismatch: hard_stop
+  failed_gradient_control: hard_stop
+  scientific_plateau: flag_owner_review_continue_unless_owner_stops
+  early_bad_ppl: continue
+  no_automatic_strategy_forks: true
+  science_review_min_steps_after_full_weight: 2000
+  science_warning_at_step: 10000

@@ -1,0 +1,50 @@
+{
+  "schema_version": 1,
+  "status": "UNRESOLVED_REPOSITORY_BINDINGS_NOT_READY_TO_TRAIN",
+  "repo_root": null,
+  "python_executable": null,
+  "run_root": null,
+  "commands": {
+    "train": null,
+    "evaluate": null,
+    "precheck": null
+  },
+  "entrypoint_contract": "argv prefix only; adapter must accept flags documented in CODEX_IMPLEMENTATION_TASK.md; never shell-eval",
+  "data": {
+    "owt_train": null,
+    "owt_validation": null,
+    "split_manifest": null,
+    "tokenizer": null,
+    "tokenizer_revision": null
+  },
+  "legacy": {
+    "model_factory": null,
+    "model_config": null,
+    "tau_lut": null,
+    "tau_inverse": null,
+    "bias_safe_time_function": null,
+    "sc_microbatch": null,
+    "generation_metrics": null,
+    "gpt2large_evaluator": null,
+    "mse50k_eval_checkpoint": null,
+    "sc_prepass_dropout": null
+  },
+  "resolved_legacy_fields": {
+    "layernorm_eps": null,
+    "bias_safe_time_description": null,
+    "safe_time_upper": null,
+    "sc_prepass_dropout_legacy": null,
+    "legacy_weight_decay": null
+  },
+  "provenance": {
+    "code_commit": null,
+    "source_sha256_manifest": null,
+    "data_manifest_sha256": null,
+    "tokenizer_sha256": null,
+    "tau_lut_sha256": null,
+    "legacy_config_sha256": null,
+    "environment_lock": null,
+    "source_manifest_path": null
+  },
+  "precheck_report": null
+}

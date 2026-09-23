@@ -1,0 +1,52 @@
+patch_version: task1-f-30k-to-50k-v1-resolved
+base_owner_delta: patch.yaml
+user_overrides:
+  resume_checkpoint_step: 30000
+  discard_31k_continuation: true
+  require_rollout_gap_diagnostic_before_rollout_source: true
+  rollout_source_scope_if_enabled: D_patch_8_only
+line: F
+terminal_step: 50000
+checkpoint_sha256: c530cca8a9dce52c337d3724236db1238f9af4b2c0ce574923fc670c97d3a523
+scheduler_review:
+  candidates: [A, B, C, D]
+  selection_checkpoints: [20000, 30000]
+  selection_seed: 424242
+  selected_grid_name: B
+  selected_grid: [0.0, 0.2375, 0.475, 0.7125, 0.95]
+  resolution: fallback_best_health_qualified_legacy_at_30k
+  new_grid_admitted: false
+rollout_gap_gate_30k:
+  canonical_K: 2
+  seed_count: 16
+  noninitial_intervals_passing: []
+  required_intervals: 2
+  terminal_signal_error_original: 0.42515711300075054
+  terminal_signal_error_prefix_reset: 0.4230389669537544
+  terminal_signal_error_reduction: 0.004982031306135948
+  required_prefix_reset_reduction: 0.25
+  passed: false
+rollout_source_resolution:
+  enabled: false
+  reason: 30k gate failed; both 30k and 32k are required
+  D_patch_rows: 8
+  source: analytical_data
+training_delta_after_step_32000:
+  counts: {S: 12, M: 24, L: 16, D: 24, D_patch: 8, Z: 6, H: 6}
+  original_D_unchanged: true
+  D_patch_grid: B
+  D_patch_rows_per_interval: 2
+  D_patch_exact_per_interval: 1
+  D_patch_jittered_per_interval: 1
+  map_batch: 96
+  local_batch: 256
+  closure_rows_from_S_M: 32
+  rho_map: 0.30
+  recalibrate_lambda_at_step: 32000
+unchanged:
+  - objective_and_stop_gradient_semantics
+  - optimizer_and_EMA_state
+  - canonical_teacher_K
+  - local_sampler
+  - learning_rate_schedule
+  - original_24_D_rows

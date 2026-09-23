@@ -1,0 +1,38 @@
+# Paired control: LangFlow-style embedding ODE with clean-token CE.
+
+name: langflow_flm_hybrid
+backbone: dit
+parameterization: mean
+time_conditioning: True
+T: 0
+subs_masking: False
+causal_attention: False
+ignore_bos: False
+t_max: 1.0
+t_min: 0.0
+double_temb: False
+learnable_loss_weighting: False
+training_time_sampling: uniform_tau
+
+embedding_state: True
+normalize_embeddings: True
+self_conditioning: True
+self_condition_probability: 0.25
+tokenwise_bias: True
+token_bias_warmup_steps: 5000
+codebook_gradient_mode: all
+diagnostic_interval_steps: 100
+gradient_route_interval_steps: 25
+validation_seed: 1729
+
+gumbel:
+  loc: 4.723
+  scale: 0.852
+  cutoff: 1.0e-5
+
+loss_type: cross_entropy
+prediction_target: clean_token_posterior
+output_transform: softmax
+reduction: vocab_sum_then_valid_token_mean
+time_weighting: fixed_gumbel_proposal_unit_weight
+optimization_scale: 1.0

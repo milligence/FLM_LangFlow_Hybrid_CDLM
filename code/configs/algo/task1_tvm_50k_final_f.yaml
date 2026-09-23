@@ -1,0 +1,47 @@
+name: task1_tvm_50k_final
+backbone: dit
+parameterization: mean
+time_conditioning: true
+T: 0
+subs_masking: false
+causal_attention: false
+ignore_bos: false
+t_max: 1.0
+t_min: 0.0
+double_temb: false
+learnable_loss_weighting: false
+
+state_space: vocab
+corruption: flm_linear_gaussian
+embedding_state: false
+flm_time_eps: 1.0e-5
+time_sampling: flm_decoding_error_rate_tau_inverse
+training_time_sampling: uniform_tau
+model_time_condition: tau
+normalize_embeddings: false
+self_conditioning: true
+self_condition_probability: 0.25
+tokenwise_bias: true
+token_bias_warmup_steps: 5000
+token_bias_schedule: warmup
+classification_prototype_mode: direct_vocab_state
+bias_interpretation: matched_flm_vocab_gaussian_direct
+codebook_gradient_mode: all
+loss_type: softmax_probability_mse
+prediction_target: clean_token_one_hot_and_target_ema_terminal_posterior
+output_transform: posterior_softmax_plus_eta_centered_B
+reduction: local256_map96_closure32_contract
+time_weighting: contracted_tau_and_pair_curriculum
+optimization_scale: 1.0
+
+task1_tvm_final_line: F
+task1_tvm_contract_dir: ???
+task1_finite_init_seed: 20260922
+task1_finite_time_conditioning: true
+task1_compile_finite_jvp: true
+task1_compile_calibration_kernels: true
+task1_canonical_gate_batch: 4
+task1_map_microbatch_override: 8
+task1_eval_weight_role: eval_ema
+task1_eval_mode: finite
+task1_eval_physical_grid: [0.0, 0.95]

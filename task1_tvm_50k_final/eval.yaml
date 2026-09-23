@@ -1,0 +1,268 @@
+contract_version: task1-tvm-50k-final-v1.0.0
+checkpoint_steps:
+- 1000
+- 2000
+- 3000
+- 5000
+- 6000
+- 8000
+- 10000
+- 15000
+- 20000
+- 30000
+- 40000
+- 50000
+formal_steps:
+- 10000
+- 20000
+- 30000
+- 50000
+trend_samples: 128
+formal_samples: 128
+seed: 424242
+sample_id_policy: same 128 sample IDs paired across models/checkpoints/grids
+noise_bank: stateless keyed by sample_id; standard Gaussian vocabulary state
+sequence_length: 128
+temperature: 1.0
+top_k: null
+top_p: null
+suppress_special_tokens: false
+stop_on_eos: false
+decode: argmax_final_state
+extra_final_denoise: false
+finite:
+  terminal: 0.95
+  cache: cold_each_query
+  solver: apply learned finite map once per interval
+  grids:
+    one:
+    - 0.0
+    - 0.95
+    two:
+    - 0.0
+    - 0.5814685447
+    - 0.95
+    four_primary:
+    - 0.0
+    - 0.3392770637
+    - 0.5814685447
+    - 0.7246687714
+    - 0.95
+    four_uniform:
+    - 0.0
+    - 0.2375
+    - 0.475
+    - 0.7125
+    - 0.95
+  selected_grid_search: false
+local:
+  solver: Euler
+  physical_grids: uniform physical time
+  posterior_temperature: 1.0
+  modes:
+    legacy_rolling_T1:
+      terminal: 1.0
+      nfe_options:
+      - 128
+      - 512
+      first_cache: zero
+      cache_after_query: posterior@same_weights_W_embed
+      query_at_t1: false
+    matched_rolling_T095:
+      terminal: 0.95
+      nfe_options:
+      - 512
+      cache: rolling
+    matched_cold_T095:
+      terminal: 0.95
+      nfe_options:
+      - 128
+      cache: zero_each_query
+    canonical_fixed_budget_T095:
+      terminal: 0.95
+      forward_budget: 128
+      macro_steps: 128/effective_K
+      weights: target_ema
+      K: accepted_or_transition_target_field
+      report_actual_K_and_macro_steps: true
+matrix:
+- checkpoints: all
+  weights:
+  - online
+  - target_ema
+  - eval_ema
+  tasks:
+  - finite_all_grids
+  samples: 128
+- checkpoints: formal
+  weights:
+  - eval_ema
+  tasks:
+  - finite_all_grids
+  samples: 128
+  replace_overlapping_trend_eval: true
+- checkpoints: all
+  weights:
+  - online
+  - target_ema
+  - eval_ema
+  tasks:
+  - legacy_rolling_T1:128
+  samples: 128
+- checkpoints:
+  - 5000
+  - 15000
+  - 40000
+  weights:
+  - eval_ema
+  tasks:
+  - legacy_rolling_T1:512
+  samples: 128
+- checkpoints: formal
+  weights:
+  - eval_ema
+  tasks:
+  - legacy_rolling_T1:512
+  samples: 128
+- checkpoints: formal
+  weights:
+  - online
+  - target_ema
+  tasks:
+  - legacy_rolling_T1:512
+  samples: 128
+- checkpoints: formal
+  weights:
+  - eval_ema
+  tasks:
+  - matched_rolling_T095:512
+  - matched_cold_T095:128
+  samples: 128
+- checkpoints:
+  - 6000
+  - 10000
+  - 20000
+  - 30000
+  - 50000
+  weights:
+  - target_ema
+  tasks:
+  - canonical_fixed_budget_T095
+  samples: 128
+baseline_reference:
+  checkpoint_binding: legacy.mse50k_eval_checkpoint
+  read_only: true
+  required: true
+  evaluate_once_tasks:
+  - legacy_rolling_T1:512
+  - matched_rolling_T095:512
+  samples: 128
+  historical_ppl: 343.8856
+  historical_terminal: 1.0
+  no_claim_of_matched_terminal_without_remeasurement: true
+local_validation:
+  text_sequences: 256
+  time_nodes: physical linspace(0,1,51) with last node replaced by verified legacy safe upper time
+  bins:
+  - - 0
+    - 0.25
+  - - 0.25
+    - 0.5
+  - - 0.5
+    - 0.65
+  - - 0.65
+    - 0.75
+  - - 0.75
+    - 0.85
+  - - 0.85
+    - 0.95
+  - - 0.95
+    - 1.0
+  reduction: equal_weight_per_time_node; sequence_clustered_SE
+  weights:
+  - online
+  - target_ema
+  - eval_ema
+  K_diagnostics:
+  - 1
+  - 2
+  - 4
+  primary_loss:
+  - CE
+  - probability_MSE
+  same_corruption_for_all_K_and_weights: true
+  evaluation_dropout: 0.0
+  full_bank_schedule: milestone checkpoint evaluations and canonical gate attempts only
+  quick_probe_every_steps: 500
+  quick_probe_sequences: 64
+  quick_probe_times:
+  - 0.0
+  - 0.1
+  - 0.25
+  - 0.5
+  - 0.6
+  - 0.65
+  - 0.7
+  - 0.75
+  - 0.8
+  - 0.85
+  - 0.95
+  quick_probe_weights:
+  - online
+  - target_ema
+  quick_probe_K: 1
+  K_diagnostics_scope: target_ema only at canonical gates; reuse one chain, not three independent repeated chains
+  store_bank: token IDs, sequence/noise seeds, time nodes, immutable fingerprints; never materialize the entire
+    vocab-noise bank
+map_validation:
+  frozen_probe_manifest: true
+  source_law: union of snapshots of scheduled sampler stages; sample once per line and persist
+  strata:
+  - short
+  - medium
+  - long
+  - prefix
+  - full_span
+  - each_grid_each_interval
+  - chi_bins
+  counts_per_generic_stratum: 32
+  counts_per_deployment_interval: 16
+  teacher: current_accepted_canonical_target_ema
+  teacher_moves_flag: true
+  data_coupled_endpoint_not_ground_truth_flow_map: true
+  compare_fixed_endpoints_as_secondary_field_drift_probe: true
+metrics:
+  legacy_metric_binding: legacy.generation_metrics
+  legacy_definition_audit_required: true
+  legacy_ppl_binding: legacy.gpt2large_evaluator
+  evaluator_model: gpt2-large
+  extra_exact_metrics:
+  - corpus_unigram_entropy_nats
+  - mean_sequence_unigram_entropy_nats
+  - corpus_distinct_1
+  - corpus_distinct_2
+  - mean_sequence_repeat4_excess_fraction
+  - max_token_corpus_fraction
+  - special_token_fraction
+  no_cross_sequence_ngrams: true
+  ppl_bootstrap_unit: sequence
+  bootstrap_replicates: 1000
+  do_not_compare_unknown_entropy_definitions: true
+artifacts:
+  save_token_ids_all: true
+  save_decoded_text_all: true
+  fixed_preview_count: 32
+  save_per_sequence_evaluator_nll_and_count: true
+  save_per_sequence_distribution_metrics: true
+  save_grid_and_backbone_forward_counter: true
+  atomic_metrics_json: true
+runtime:
+  pause_training_during_shared_GPU_evaluation: true
+  no_concurrent_gpu_contention: true
+  resume_training_rng_after_evaluation: true
+  blocking_gate_eval_at:
+  - 5000
+  - 6000
+  - 10000
+  - 11000
+  existing_dedicated_eval_gpu: use only if already allocated and explicitly available; do not rent new resources
