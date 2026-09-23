@@ -1,0 +1,298 @@
+contract_version: task1-tvm-50k-final-v1.0.0
+line: P
+step_convention: k=completed optimizer updates; stage [start,end) controls update k+1
+local:
+  batch: 256
+  importance_correction: false
+  time_direction: 0=noise,1=data
+  tau_lut_binding: legacy.tau_lut
+  tau_inverse_binding: legacy.tau_inverse
+  draw_interval: open_except_declared_atoms
+  one_time_per_sequence: true
+  bins:
+  - name: zero
+    law: atom
+    t: 0.0
+  - name: tau_early
+    law: uniform_tau
+    low: 0.0
+    high: 0.0078125
+  - name: physical_early
+    law: uniform_physical
+    low: 0.0
+    high: inverse_tau(1/128)
+  - name: tau_0078125_01
+    law: uniform_tau
+    low: 0.0078125
+    high: 0.1
+  - name: tau_01_04
+    law: uniform_tau
+    low: 0.1
+    high: 0.4
+  - name: tau_04_07
+    law: uniform_tau
+    low: 0.4
+    high: 0.7
+  - name: tau_07_1
+    law: uniform_tau
+    low: 0.7
+    high: 1.0
+  stages:
+  - start_step: 0
+    end_step: 15000
+    law: uniform_tau
+    quotas: null
+  - start_step: 15000
+    end_step: 18000
+    law: seven_bins
+    quotas:
+    - 16
+    - 32
+    - 48
+    - 56
+    - 56
+    - 32
+    - 16
+  - start_step: 18000
+    end_step: 24000
+    law: seven_bins
+    quotas:
+    - 8
+    - 24
+    - 40
+    - 64
+    - 64
+    - 40
+    - 16
+  - start_step: 24000
+    end_step: 30000
+    law: seven_bins
+    quotas:
+    - 8
+    - 8
+    - 32
+    - 56
+    - 80
+    - 48
+    - 24
+  - start_step: 30000
+    end_step: 50000
+    law: seven_bins
+    quotas:
+    - 6
+    - 6
+    - 24
+    - 42
+    - 92
+    - 68
+    - 18
+map:
+  subset_of_local_texts: true
+  unique_map_texts_per_update: 96
+  noise_independent_of_local: true
+  subset_selection: uniform_without_replacement_global_256_then_assign_shuffled_class_labels
+  source_law:
+    base: single-draw marginal of local.stages at current k
+    draw_order:
+    - class
+    - r from conditioned current local marginal
+    - eta conditional on r
+    - s=r+(1-r)*eta
+    source_upper: r_max=(terminal_cap-eta_low)/(1-eta_low)
+    source_support: 0 <= r < r_max; zero atom only when present in current local marginal
+    eta_upper: min(eta_high,(terminal_cap-r)/(1-r))
+    mixture_conditioning: reweight original bin weights by each bin retained probability mass, then sample within
+      retained interval
+    importance_correction: false
+    chi_hard_filter: false
+    physical_source_window: null
+    local_time_reuse: false
+    invalid_sample_action: raise; do not clamp or silently change class
+  classes:
+    E_F:
+      kind: continuous
+      eta_law: log_uniform
+      eta_low: 0.015625
+      eta_high: 0.0625
+    E_P:
+      kind: continuous
+      eta_law: log_uniform
+      eta_low: 0.0078125
+      eta_high: 0.03125
+    S:
+      kind: continuous
+      eta_law: log_uniform
+      eta_low: 0.001953125
+      eta_high: 0.125
+    M_early:
+      kind: continuous
+      eta_law: uniform
+      eta_low: 0.125
+      eta_high: 0.25
+    M:
+      kind: continuous
+      eta_law: uniform
+      eta_low: 0.125
+      eta_high: 0.5
+    L:
+      kind: continuous
+      eta_law: uniform
+      eta_low: 0.5
+      eta_high: 0.95
+    Z_short:
+      kind: prefix
+      r: 0.0
+      eta_law: log_uniform
+      eta_low: 0.015625
+      eta_high: 0.0625
+    Z:
+      kind: prefix
+      r: 0.0
+      eta_law: uniform
+      eta_low: 0.125
+      eta_high: 0.5
+    D_early:
+      kind: deployment
+      interval_indices:
+      - 0
+      - 1
+      - 2
+    D:
+      kind: deployment
+      interval_indices:
+      - 0
+      - 1
+      - 2
+      - 3
+    H:
+      kind: full_span
+      r: 0.0
+      s: 0.95
+  stages:
+  - start_step: 0
+    end_step: 500
+    map_batch: 0
+    source_law: null
+    terminal_cap: null
+    counts: {}
+    rho_map_start: 0
+    rho_map_end: 0
+  - start_step: 500
+    end_step: 1000
+    map_batch: 0
+    source_law: null
+    terminal_cap: null
+    counts: {}
+    rho_map_start: 0
+    rho_map_end: 0
+  - start_step: 1000
+    end_step: 2000
+    map_batch: 96
+    source_law: current_local_marginal_conditioned_on_feasibility
+    terminal_cap: 0.9
+    counts:
+      E_P: 96
+    rho_map_start: 0
+    rho_map_end: 0.015
+  - start_step: 2000
+    end_step: 3000
+    map_batch: 96
+    source_law: current_local_marginal_conditioned_on_feasibility
+    terminal_cap: 0.9
+    counts:
+      S: 64
+      M_early: 32
+    rho_map_start: 0.015
+    rho_map_end: 0.04
+  - start_step: 3000
+    end_step: 5000
+    map_batch: 96
+    source_law: current_local_marginal_conditioned_on_feasibility
+    terminal_cap: 0.9
+    counts:
+      S: 32
+      M: 32
+      D_early: 24
+      Z: 8
+    rho_map_start: 0.04
+    rho_map_end: 0.08
+  - start_step: 5000
+    end_step: 8000
+    map_batch: 96
+    source_law: current_local_marginal_conditioned_on_feasibility
+    terminal_cap: 0.95
+    counts: &id001
+      S: 12
+      M: 24
+      L: 24
+      D: 24
+      Z: 6
+      H: 6
+    rho_map_start: 0.08
+    rho_map_end: 0.2
+  - start_step: 8000
+    end_step: 10000
+    map_batch: 96
+    source_law: current_local_marginal_conditioned_on_feasibility
+    terminal_cap: 0.95
+    counts: *id001
+    rho_map_start: 0.2
+    rho_map_end: 0.3
+  - start_step: 10000
+    end_step: 50000
+    map_batch: 96
+    source_law: current_local_marginal_conditioned_on_feasibility
+    terminal_cap: 0.95
+    counts: *id001
+    rho_map_start: 0.3
+    rho_map_end: 0.3
+  hard_classes:
+  - L
+  - H
+  - D:interval_index=3
+  hard_weight:
+    start_step: 5000
+    end_step: 10000
+    start_value: 0.1
+    end_value: 1.0
+  ordinary_class_weight: 1.0
+  loss_denominator: 96
+  renormalize_by_sum_weights: false
+  deployment:
+    grids:
+      g0:
+      - 0.0
+      - 0.3392770637
+      - 0.5814685447
+      - 0.7246687714
+      - 0.95
+      gu:
+      - 0.0
+      - 0.2375
+      - 0.475
+      - 0.7125
+      - 0.95
+    grid_allocation: 12 samples per grid whenever D or D_early count=24
+    interval_allocation: equal count per eligible interval within each grid
+    jitter_fraction: 0.5
+    jitter_interior_uniform:
+    - -0.015
+    - 0.015
+    jitter_endpoints: false
+    jitter_each_sample_independent: true
+    jitter_assignment: (sample_within_interval + interval_index + k) % 2 == 1
+    jitter_order_violation: raise; bounds already guarantee order
+    D_first_step: 3000
+    D_all_intervals_first_step: 5000
+  chi_diagnostic_edges:
+  - 0.0
+  - 0.25
+  - 0.5
+  - 1.0
+  chi_tail: greater_than_1
+  full_span_first_step: 5000
+  r_zero_prefix_first_step: 3000
+  final_exact_quota_atom_r_zero: 18
+  additional_r_zero_from_general_law_after_15k: true
+  final_distribution_start_step: 5000
+  final_full_weight_step: 10000
